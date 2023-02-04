@@ -135,6 +135,8 @@ extern void jwxyz_quartz_copy_area (Display *dpy, Drawable src, Drawable dst,
 #   include <OpenGLES/ES1/gl.h>
 #  elif defined(HAVE_COCOA)
 #   include <OpenGL/gl.h>
+#  elif defined(HAVE_WAYLAND)
+#   include <GL/gl.h>
 #  elif defined(HAVE_ANDROID)
 #   include <GLES/gl.h>
 #  else

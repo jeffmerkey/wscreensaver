@@ -13,7 +13,8 @@ project(
 )
 
 wayland_client = dependency('wayland-client')
-GL = dependency('GL')
+GLES = dependency('glesv2')
+GL = dependency('gl')
 wayland_egl = dependency('wayland-egl')
 egl = dependency('egl')
 GLU = dependency('glu')
@@ -80,20 +81,24 @@ endforeach
 # TODO: only cover a few hacks
 # if we make separate 
 
-xft_files = []
+xft_files = ['utils/xft.c', 'utils/xftwrap.c']
 anim_files = [] #'hacks/recanim.c']
 
-# TODO: make a shim for 'utils/visual.c',
-hack_1_files = ['hacks/fps.c', 'utils/resources.c',  # 'utils/visual.c',
+# TODO: make a shim for 'utils/visual.c', 'utils/xmu.c'
+hack_1_files = ['hacks/fps.c', 'utils/resources.c',
 		'utils/usleep.c', 'utils/yarandom.c', 'utils/utf8wc.c',
-		'utils/font-retry.c', 'utils/xmu.c'] + xft_files + anim_files
-color_files = ['hacks/hsv.c', 'hacks/colors.c']
-hack_files = ['wayland/screenhack.c'] + hack_1_files
-xlock_files = ['wayland/screenhack.c', 'xlockmore.c'] + color_files + hack_1_files
+		'utils/font-retry.c', 'utils/pow2.c', ] + xft_files + anim_files
+color_files = ['utils/hsv.c', 'utils/colors.c']
+jwxyz = ['jwxyz/jwxyz-common.c', 'jwxyz/jwxyz-gl.c', 'jwxyz/jwxyz-timers.c']
+wayland_files = ['wayland/screenhack.c'] + jwxyz
+hack_files = wayland_files + hack_1_files
+xlock_files = wayland_files + ['xlockmore.c'] + color_files + hack_1_files
+
 
 
 hacks = [
-	['hyperball', ['hacks/hyperball.c'] + hack_files, []]
+# 	['hyperball', ['hacks/hyperball.c'] + hack_files, []]
+	['abstractile', ['hacks/abstractile.c'] + hack_files + color_files, []]
 	# the above hacks are reused by others and should be included
 ]
 
@@ -102,7 +107,7 @@ hacks = [
 include_dirs = ['../hacks','../utils', '../jwxyz']
 
 # for now, assume all external libraries are available -- but none which depend on X11
-base_deps = [math,wayland_client,wayland_egl,GL,egl,GLU,png,gdkpixbuf]
+base_deps = [math,wayland_client,wayland_egl,GLES,GL,egl,GLU,png,gdkpixbuf]
 
 foreach hack : hacks
 	name = hack[0]
@@ -116,7 +121,7 @@ foreach hack : hacks
 	
 	exec = executable(
 		'xscreensaver-wayland-'+name,
-		mod_sources,
+		files(mod_sources) + client_protos_src + client_protos_headers,
 # 		link_with: main_lib,
 		dependencies: deps + base_deps,
 		include_directories: include_dirs,

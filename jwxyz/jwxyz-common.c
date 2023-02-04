@@ -988,8 +988,8 @@ query_font (Font fid)
   min->rbearing = 32767;
 
   f->per_char = (XCharStruct *) calloc (last-first+2, sizeof (XCharStruct));
-
-  for (int i = first; i <= last; i++) {
+  int i;
+  for ( i = first; i <= last; i++) {
     XCharStruct *cs = &f->per_char[i-first];
     char s = (char) i;
     jwxyz_render_text (dpy, native_font, &s, 1, False, False, cs, 0);

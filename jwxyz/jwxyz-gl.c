@@ -84,6 +84,8 @@
 # else
 #  include <OpenGL/glu.h>
 # endif
+#elif defined(HAVE_WAYLAND)
+#  include <GL/gl.h>
 #else
 /* TODO: Does this work on iOS? */
 # ifndef HAVE_JWZGLES
@@ -353,6 +355,9 @@ jwxyz_gl_make_display (Window w)
   d->gl_texture_target = d->gl_texture_npot_p ?
                          GL_TEXTURE_RECTANGLE_EXT :
                          GL_TEXTURE_2D;
+# elif defined(HAVE_WAYLAND)
+  d->gl_texture_npot_p = False;
+  d->gl_texture_target = GL_TEXTURE_2D;
 # else
   d->gl_texture_npot_p = jwzgles_gluCheckExtension
       ((const GLubyte *) "GL_APPLE_texture_2D_limited_npot", extensions) ||
@@ -375,7 +380,8 @@ jwxyz_gl_make_display (Window w)
     Assert(d->pixel_format == GL_RGBA,
            "jwxyz_gl_make_display: Unknown pixel_format");
     unsigned long masks[4];
-    for (unsigned i = 0; i != 4; ++i) {
+    unsigned i;
+    for ( i = 0; i != 4; ++i) {
       union color_bytes color;
       color.pixel = 0;
       color.bytes[i] = 0xff;
@@ -415,7 +421,8 @@ jwxyz_gl_make_display (Window w)
 
   glGenTextures (countof (d->textures), d->textures);
 
-  for (unsigned i = 0; i != countof (d->textures); i++) {
+  unsigned i;
+  for ( i = 0; i != countof (d->textures); i++) {
     tex_parameters (d, d->textures[i]);
   }
 
@@ -615,7 +622,8 @@ enqueue (Display *dpy, Drawable d, GC gc, GLenum mode, size_t count,
     JWXYZ_QUERY_COLOR (dpy, pixel, 0xffull, color.bytes);
   }
 
-  for (size_t i = 0; i != count; ++i) // TODO: wmemset when applicable.
+  size_t i;
+  for ( i = 0; i != count; ++i) // TODO: wmemset when applicable.
     dpy->queue_color[i + old_size] = color.pixel;
 
   void *result = (char *)dpy->queue_vertex + old_size * 2 *
@@ -815,7 +823,8 @@ DrawPoints (Display *dpy, Drawable d, GC gc,
   // TODO: XPoints can be fed directly to OpenGL.
   GLshort *gl_points = enqueue (dpy, d, gc, GL_POINTS, count,
                                 gc->gcv.foreground); // TODO: enqueue returns NULL.
-  for (unsigned i = 0; i < count; i++) {
+  unsigned i;
+  for ( i = 0; i < count; i++) {
     next_point (v, points[i], mode);
     gl_points[2 * i] = v[0];
     gl_points[2 * i + 1] = v[1];
@@ -1081,7 +1090,8 @@ DrawLines (Display *dpy, Drawable d, GC gc, XPoint *points, int count,
   glTranslatef (0.5f, 0.5f, 0);
   
   short p[2] = {0, 0};
-  for (unsigned i = 0; i < count; i++) {
+  unsigned i;
+  for ( i = 0; i < count; i++) {
     next_point (p, points[i], mode);
     vertices[2 * i] = p[0];
     vertices[2 * i + 1] = p[1];
@@ -1219,7 +1229,8 @@ fill_rects (Display *dpy, Drawable d, GC gc,
             const XRectangle *rectangles, unsigned long nrectangles,
             unsigned long pixel)
 {
-  for (unsigned long i = 0; i != nrectangles; ++i) {
+  unsigned long i;
+  for (i = 0; i != nrectangles; ++i) {
     const XRectangle *r = &rectangles[i];
     GLfloat *coords = enqueue (dpy, d, gc, GL_TRIANGLE_STRIP, 4, pixel);
     coords[0] = r->x;
@@ -1260,7 +1271,8 @@ FillPolygon (Display *dpy, Drawable d, GC gc,
     GLshort *vertices = malloc(npoints * sizeof(GLshort) * 2); // TODO: Oh look, another unchecked malloc.
     short v[2] = {0, 0};
   
-    for (unsigned i = 0; i < npoints; i++) {
+    unsigned i;
+    for ( i = 0; i < npoints; i++) {
       next_point(v, points[i], mode);
       vertices[2 * i] = v[0];
       vertices[2 * i + 1] = v[1];
@@ -1464,7 +1476,8 @@ draw_arc (Display *dpy, Drawable d, GC gc, int x, int y,
     arc_xy (data_ptr, cx, cy, w2, h2, angle1_f);
     data_ptr += 2;
 
-    for (unsigned s = 0; s != segments; ++s) {
+    unsigned s;
+    for ( s = 0; s != segments; ++s) {
       // TODO: Make sure values of theta for the following arc_xy call are between
       // angle1_f and angle1_f + angle2_f.
       arc_xy (data_ptr, cx, cy, w2, h2, (segment0 + s) * segment_angle);
@@ -1493,7 +1506,8 @@ draw_arc (Display *dpy, Drawable d, GC gc, int x, int y,
     arc_xy2 (data_ptr, cx, cy, w2, h2, angle1_f, gglw);
     data_ptr += 4;
 
-    for (unsigned s = 0; s != segments; ++s) {
+    unsigned s;
+    for ( s = 0; s != segments; ++s) {
       arc_xy2 (data_ptr, cx, cy, w2, h2, (segment0 + s) * segment_angle,
                gglw);
       data_ptr += 4;
@@ -1681,8 +1695,10 @@ PutImage (Display *dpy, Drawable d, GC gc, XImage *ximage,
     }
 #endif
     uint32_t *data_out = (uint32_t *)tex_data;
-    for(unsigned y = h; y; --y) {
-      for(unsigned x = 0; x != w8; ++x) {
+    unsigned y;
+    for( y = h; y; --y) {
+      unsigned x;
+      for( x = 0; x != w8; ++x) {
         // TODO: Does big endian work here?
         uint8_t byte = src_data[x];
         uint32_t word = byte;
@@ -1811,8 +1827,10 @@ GetSubImage (Display *dpy, Drawable d, int x, int y,
     /* Flip this upside down. :( */
     uint32_t *top = dest_data;
     uint32_t *bottom = dest_data + pixels_per_line * (height - 1);
-    for (unsigned y = height / 2; y; --y) {
-      for (unsigned x = 0; x != width; ++x) {
+    unsigned y;
+    for ( y = height / 2; y; --y) {
+      unsigned x;
+      for ( x = 0; x != width; ++x) {
         uint32_t px = top[x];
         top[x] = bottom[x];
         bottom[x] = px;
@@ -1855,9 +1873,11 @@ GetSubImage (Display *dpy, Drawable d, int x, int y,
     }
 #endif
     const uint32_t *bottom = rgba_image + width * (height - 1);
-    for (unsigned y = height; y; --y) {
+    unsigned y;
+    for ( y = height; y; --y) {
       memset (top, 0, width / 8);
-      for (unsigned x = 0; x != width; ++x) {
+      unsigned x;
+      for ( x = 0; x != width; ++x) {
         if (bottom[x] & 0x80)
           top[x >> 3] |= (1 << (x & 7));
       }
@@ -1941,8 +1961,10 @@ SetClipMask (Display *dpy, GC gc, Pixmap m)
   glReadPixels (0, 0, frame->width, frame->height, GL_RGBA, GL_UNSIGNED_BYTE,
                 rgba);
 
-  for (unsigned y = 0; y != frame->height; ++y) {
-    for (unsigned x = 0; x != frame->width; ++x)
+  unsigned y;
+  for ( y = 0; y != frame->height; ++y) {
+    unsigned x;
+    for ( x = 0; x != frame->width; ++x)
       alpha[x] = rgba[x * 4];
 
     rgba += frame->width * 4;
@@ -1983,7 +2005,8 @@ void set_points_list(XPoint *points, int npoints, linked_point *root)
     linked_point *current;  
 
     current = root;
-    for (int i = 0; i < npoints - 2 ; i++) {
+    int i;
+    for ( i = 0; i < npoints - 2 ; i++) {
         current->x = points[i].x;
         current->y = points[i].y;
         current->next = (linked_point *) malloc(sizeof(linked_point)); 
