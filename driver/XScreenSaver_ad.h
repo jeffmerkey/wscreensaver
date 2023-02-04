@@ -14,7 +14,7 @@
 "*grabDesktopImages:	True",
 "*grabVideoFrames:	False",
 "*chooseRandomImages:	True",
-"*imageDirectory:	/Library/Desktop Pictures/",
+"*imageDirectory:	/usr/share/wallpapers/",
 "*nice:			10",
 "*memoryLimit:		0",
 "*lock:			False",
@@ -36,12 +36,10 @@
 "*textURL:		https://en.wikipedia.org/w/index.php?title=Special:NewPages&feed=rss",
 "*demoCommand: xscreensaver-settings",
 "*helpURL: https://www.jwz.org/xscreensaver/man.html",
-"*loadURL: gnome-open '%s'",
-"*manualCommand: yelp man:%s || \
-			x-terminal-emulator -t '%s manual' \
-			  -e /bin/sh -c \"man %s; read foo\"",
+"*loadURL: x-www-browser '%s' || firefox '%s' || chromium-browser '%s'",
+"*manualCommand: lxterminal -T '%s manual' \
+		    -e /bin/sh -c 'man \"%s\" ; read foo'",
 "*dateFormat:		%I:%M %p, %a %b %e",
-"*newLoginCommand:	no-such-login-manager",
 "XScreenSaver.pointerHysteresis:		10",
 "XScreenSaver.bourneShell:		/bin/sh",
 "*dialogTheme:			default",

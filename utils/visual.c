@@ -22,7 +22,11 @@
 #ifndef HAVE_ANDROID
 #include <X11/Xutil.h>
 #else
+#ifdef HAVE_WAYLAND
+#include "jwxyz.h"
+#else
 #include "../android/android-visual.h"
+#endif
 #endif
 
 extern char *progname;
