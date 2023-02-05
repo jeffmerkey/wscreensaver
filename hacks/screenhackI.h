@@ -106,6 +106,11 @@
 #  ifdef HAVE_GLES3
 #   include "OpenGLES/ES3/gl.h"
 #  endif
+# elif defined(HAVE_WAYLAND)
+#  include <GL/gl.h>
+#  include <GL/glu.h>
+#  include <EGL/egl.h>
+#  include <EGL/eglext.h>
 # elif defined(HAVE_ANDROID)
 #  include <GLES/gl.h>
 #  ifdef HAVE_GLES3

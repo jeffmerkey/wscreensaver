@@ -20,6 +20,7 @@
 
 #include "xlockmore.h"
 #include <ctype.h>
+#include <sys/time.h>
 
 #ifdef USE_GL /* whole file */
 
@@ -89,6 +90,7 @@ ENTRYPOINT ModeSpecOpt voronoi_opts =
 /* Returns the current time in seconds as a double.
  */
 static double
+
 double_time (void)
 {
   struct timeval now;

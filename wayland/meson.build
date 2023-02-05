@@ -1,5 +1,5 @@
 # use meson for the Wayland build at the moment, because all
-# the examples use this system. TODO: port to autoconf
+# the examples use this system. TODO: port to autoconf/Makefile.in
 
 project(
 	'xscreensaver-wayland',
@@ -32,10 +32,12 @@ build_flags = [
     '-DHAVE_ANDROID=1',
     '-DHAVE_WAYLAND=1',
     '-DHAVE_GL=1',
+#     '-DHAVE_EGL=1', # added -- no EGL, using JWXYZ
+    '-DUSE_GL=1', # added
     '-DHAVE_JWXYZ=1',
     '-DJWXYZ_GL=1',
     '-DJWXYZ_IMAGE=1',
-    '-DHAVE_JWZGLES=1',
+#     '-DHAVE_JWZGLES=1',
     '-DHAVE_XUTF8DRAWSTRING=1',
     '-DHAVE_GLBINDTEXTURE=1',
     '-DHAVE_UNISTD_H=1',
@@ -92,13 +94,17 @@ color_files = ['utils/hsv.c', 'utils/colors.c']
 jwxyz = ['jwxyz/jwxyz-common.c', 'jwxyz/jwxyz-gl.c', 'jwxyz/jwxyz-timers.c']
 wayland_files = ['wayland/screenhack.c'] + jwxyz
 hack_files = wayland_files + hack_1_files
-xlock_files = wayland_files + ['xlockmore.c'] + color_files + hack_1_files
+xlock_files = wayland_files + ['hacks/xlockmore.c'] + color_files + hack_1_files
 
-
+# also skips 
+fps_files = ['hacks/glx/texfont.c','hacks/fps.c', 'hacks/glx/fps-gl.c']
+glsl_files = ['hacks/glx/glsl-utils.c']
+glhack_files = wayland_files + ['hacks/xlockmore.c','hacks/glx/xlock-gl-utils.c','hacks/glx/erase-gl.c'] + hack_1_files + fps_files + glsl_files
 
 hacks = [
 # 	['hyperball', ['hacks/hyperball.c'] + hack_files, []]
-	['abstractile', ['hacks/abstractile.c'] + hack_files + color_files, []]
+	['abstractile', ['hacks/abstractile.c'] + hack_files + color_files, []],
+	['voronoi', ['hacks/glx/voronoi.c'] + glhack_files + color_files, []]
 	# the above hacks are reused by others and should be included
 ]
 

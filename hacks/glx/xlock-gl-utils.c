@@ -28,7 +28,7 @@
 #endif
 
 
-# ifndef HAVE_EGL
+# if !defined(HAVE_EGL) && !defined(HAVE_WAYLAND)
 /* Gag -- we use this to turn X errors from glXCreateContext() into
    something that will actually make sense to the user.
  */
@@ -48,7 +48,7 @@ BadValue_ehandler (Display *dpy, XErrorEvent *error)
 }
 #endif /* !HAVE_EGL */
 
-
+#ifndef HAVE_WAYLAND
 GLXContext *
 init_GL(ModeInfo * mi)
 {
@@ -265,6 +265,7 @@ init_GL(ModeInfo * mi)
    */
   return &mi->glx_context;
 }
+#endif
 
 
 
@@ -276,6 +277,7 @@ clear_gl_error (void)
     ;
 }
 
+#ifndef HAVE_WAYLAND
 /* report a GL error. */
 void
 check_gl_error (const char *type)
@@ -308,7 +310,7 @@ check_gl_error (const char *type)
   fprintf (stderr, "%s: %s error: %s\n", progname, type, e);
   exit (1);
 }
-
+#endif
 
 /* Callback in xscreensaver_function_table, via xlockmore.c.
  */

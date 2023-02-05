@@ -122,6 +122,7 @@
 
 
 #include "screenhackI.h"
+#include "xlockmoreI.h"
 // #include "xmu.h"
 #include "version.h"
 // #include "vroot.h"
@@ -244,6 +245,12 @@ XCreatePixmap (Display *dpy, Drawable d,
   return p;
 }
 
+int
+XFreePixmap (Display *dpy, Pixmap p)
+{
+  abort();
+}
+
 void
 jwxyz_abort (const char *fmt, ...)
 {
@@ -293,20 +300,22 @@ jwxyz_load_native_font (Window window,
 {
   // TODO:
 }
+char *
+jwxyz_unicode_character_name (Display *, Font, unsigned long uc) {
+  // TODO
+}
 
 
 double
 current_device_rotation (void)
 {
-  // TODO
   return 0.0;
 }
 
 Bool
 ignore_rotation_p (Display *dpy)
 {
-  // struct running_hack *rh = XRootWindow(dpy, 0)->window.rh;
-  // return rh->ignore_rotation_p;
+  return True;
 }
 
 void
@@ -321,6 +330,45 @@ jwxyz_bind_drawable (Display *dpy, Window w, Drawable d)
   // TODO
 }
 
+
+Bool
+validate_gl_visual (FILE *out, Screen *screen, const char *window_desc,
+                    Visual *visual)
+{
+  return True;
+}
+
+
+Visual *
+get_gl_visual (Screen *screen)
+{
+  // todo; define a visual based on what EGL provides
+  return NULL;
+}
+
+/* Called by OpenGL savers using the XLockmore API.
+ */
+GLXContext *
+init_GL (ModeInfo *mi)
+{
+  /* The X11 version of this function is in hacks/glx/xlock-gl-utils.c
+     That version:
+       - Does the GLX or EGL initialization;
+       - Does glDrawBuffer GL_BACK/GL_FRONT depending on GL_DOUBLEBUFFER;
+       - Parses the "background" resource rather than assuming black.
+   */
+  glClearColor (0, 0, 0, 1);
+  glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  glClearColor(0,0,0,1);
+
+  glClearColor(0,0,0,1);
+
+  // Caller expects a pointer to an opaque struct...  which it dereferences.
+  // Don't ask me, it's historical...
+  static int blort = -1;
+  return (void *) &blort;
+}
 
 /* report a GL error. */
 void
@@ -478,7 +526,11 @@ add_default_resource(char *default_line) {
   while (*t2 == ' ' || *t2 == '\t') {
      t2++;
   }
-  /* maybe also trim trailing edge */
+  char *end = t2 + strlen(t2);
+  while (*(end - 1) == ' ' || *(end - 1) == '\t') {
+    end--;
+    *end = 0;
+  }
   char *value = strdup(t2);
 
   if (*tmp == '*') {
@@ -525,7 +577,7 @@ scan_resource(const char *progname, const char *res_name, const char *progclass,
     if (entry.res_class && res_class && strcmp(entry.res_class, res_class)) {
       continue;
     }
-    return entry.value;
+    return strdup(entry.value);
   }
   return NULL;
 }
@@ -801,7 +853,8 @@ setup_egl(struct wl_display *wl_dpy) {
   free(configs);
 }
 
-static void noop() {
+static void
+noop(void) {
 
 }
 
@@ -1073,7 +1126,7 @@ int main(int argc, char **argv) {
 
   setup_egl(state.display);
 
-  state.target_output_name = NULL;//"WL-1"; // return to NULL
+  state.target_output_name = get_string_resource(NULL, "wlOutputName", "*");
 
   state.registry = wl_display_get_registry(state.display);
   wl_registry_add_listener(state.registry, &registry_listener, NULL);
@@ -1132,7 +1185,7 @@ int main(int argc, char **argv) {
   state.needs_ack_configure = False;
 
   state.egl_window = wl_egl_window_create(state.surface, state.width, state.height);
-  state.egl_surface = eglCreateWindowSurface(state.egl_dpy, state.egl_cfg, state.egl_window, NULL);
+  state.egl_surface = eglCreateWindowSurface(state.egl_dpy, state.egl_cfg, (EGLNativeWindowType)state.egl_window, NULL);
   state.egl_context = eglCreateContext(state.egl_dpy, state.egl_cfg, EGL_NO_CONTEXT, NULL);
 
   if (!eglMakeCurrent(state.egl_dpy, state.egl_surface, state.egl_surface, state.egl_context)) {
@@ -1159,7 +1212,14 @@ int main(int argc, char **argv) {
 # undef ya_rand_init
 ya_rand_init (0);
 
-  void *closure = ft->init_cb(disp, window);
+  /* Kludge: even though the init_cb functions are declared to take 2 args,
+     actually call them with 3, for the benefit of xlockmore_init() and
+     xlockmore_setup().
+   */
+  void *(*init_cb) (Display *, Window, void *) =
+    (void *(*) (Display *, Window, void *)) ft->init_cb;
+
+  void *closure = init_cb(disp, window, ft->setup_arg);
   fps_state *fpst = fps_init (disp, window);
   unsigned long delay = ft->draw_cb (disp, window, closure);
 
@@ -1197,7 +1257,7 @@ ya_rand_init (0);
       }
   }
 
-
+  ft->free_cb (disp, window, closure);
 
 #ifdef HAVE_RECORD_ANIM
   if (anim_state) screenhack_record_anim_free (anim_state);

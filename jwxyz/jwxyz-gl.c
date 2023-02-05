@@ -72,6 +72,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <wchar.h>
@@ -86,6 +87,7 @@
 # endif
 #elif defined(HAVE_WAYLAND)
 #  include <GL/gl.h>
+#  include <GL/glu.h>
 #else
 /* TODO: Does this work on iOS? */
 # ifndef HAVE_JWZGLES
@@ -348,16 +350,16 @@ jwxyz_gl_make_display (Window w)
 
   // On really old systems, it would make sense to split textures
   // into subsections, to work around the maximum texture size.
-# ifndef HAVE_JWZGLES
+#ifdef HAVE_WAYLAND
+  d->gl_texture_npot_p = False;
+  d->gl_texture_target = GL_TEXTURE_2D;
+#elif !defined(HAVE_JWZGLES)
   d->gl_texture_npot_p = gluCheckExtension ((const GLubyte *)
                                             "GL_ARB_texture_rectangle",
                                             extensions);
   d->gl_texture_target = d->gl_texture_npot_p ?
                          GL_TEXTURE_RECTANGLE_EXT :
                          GL_TEXTURE_2D;
-# elif defined(HAVE_WAYLAND)
-  d->gl_texture_npot_p = False;
-  d->gl_texture_target = GL_TEXTURE_2D;
 # else
   d->gl_texture_npot_p = jwzgles_gluCheckExtension
       ((const GLubyte *) "GL_APPLE_texture_2D_limited_npot", extensions) ||
@@ -744,7 +746,7 @@ jwxyz_gl_set_gc (Display *dpy, GC gc)
       tex_w = gc->clip_mask_width + 2, tex_h = gc->clip_mask_height + 2;
     tex_size (dpy, &tex_w, &tex_h);
 
-# ifndef HAVE_JWZGLES
+# if !defined(HAVE_JWZGLES) && !defined(HAVE_WAYLAND)
     if (dpy->gl_texture_target == GL_TEXTURE_RECTANGLE_EXT)
     {
       glScalef (1, -1, 1);
@@ -1029,7 +1031,7 @@ jwxyz_gl_draw_image (Display *dpy, GC gc, GLenum gl_texture_target,
   else
     tex_y0 += height;
 
-# ifndef HAVE_JWZGLES
+#if !defined(HAVE_JWZGLES) && !defined(HAVE_WAYLAND)
   if (gl_texture_target != GL_TEXTURE_RECTANGLE_EXT)
 # endif
   {

@@ -158,7 +158,7 @@ ERROR!  Sorry, xlockmore.h requires ANSI C (gcc, for example.)
    In a Cocoa or Android world, we only define the prefixed symbol;
    the un-prefixed symbol does not exist.
  */
-#ifdef HAVE_MOBILE
+#if defined(HAVE_MOBILE) && !defined(HAVE_WAYLAND)
 # define XSCREENSAVER_LINK(NAME)
 #else
 # define XSCREENSAVER_LINK(NAME) \
