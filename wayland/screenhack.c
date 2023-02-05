@@ -348,7 +348,8 @@ get_gl_visual (Screen *screen)
 
 /* Called by OpenGL savers using the XLockmore API.
  */
-GLXContext *
+GLXContext
+*
 init_GL (ModeInfo *mi)
 {
   /* The X11 version of this function is in hacks/glx/xlock-gl-utils.c
@@ -364,11 +365,29 @@ init_GL (ModeInfo *mi)
 
   glClearColor(0,0,0,1);
 
-  // Caller expects a pointer to an opaque struct...  which it dereferences.
-  // Don't ask me, it's historical...
-  static int blort = -1;
-  return (void *) &blort;
+  static GLXContext ctx;
+  return &ctx; //mi->glx_context;
 }
+
+/* used by the OpenGL screen savers
+ */
+
+/* Does nothing - prepareContext already did the work.
+ */
+void
+glXMakeCurrent (Display *dpy, Window window, GLXContext context)
+{
+}
+
+// needs to be implemented in Android...
+/* Copy the back buffer to the front buffer.
+ */
+void
+glXSwapBuffers (Display *dpy, Window window)
+{
+}
+
+
 
 /* report a GL error. */
 void
@@ -425,7 +444,7 @@ float
 jwxyz_scale (Window main_window)
 {
   // TODO: Use the actual device resolution.
-  return 2;
+  return 1;
 }
 
 float
@@ -1196,7 +1215,14 @@ int main(int argc, char **argv) {
 
   struct jwxyz_Drawable w;
   w.type = WINDOW;
+  w.frame.x = 0;
+  w.frame.y = 0;
+  w.frame.width = state.width;
+  w.frame.height = state.height;
   w.egl_surface = state.egl_surface;
+  w.window.last_mouse_x = 0;
+  w.window.last_mouse_y = 0;
+  w.window.rh = NULL;
   // todo: convert `state` into a 'struct running_hack` that the window then links into?
 
   Drawable window = &w;
@@ -1238,6 +1264,7 @@ ya_rand_init (0);
   }
 #endif
 
+  int iter = 0;
   while (state.running) {
       if (! usleep_and_process_events (disp, ft,
                                        window, fpst, closure, delay
@@ -1246,6 +1273,8 @@ ya_rand_init (0);
 #endif
                                        ))
         break;
+
+      fprintf(stderr, "Drawing, iteration %d\n", iter++);
 
       delay = ft->draw_cb (disp, window, closure);
 
