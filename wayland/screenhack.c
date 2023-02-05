@@ -234,6 +234,7 @@ XCreatePixmap (Display *dpy, Drawable d,
   p->pixmap.depth = depth;
 
   // create_pixmap (win, p);
+  fprintf(stderr, "Call to unimplemented XCreatePixmap\n");
 
   /* For debugging. */
 # if 0
@@ -248,6 +249,7 @@ XCreatePixmap (Display *dpy, Drawable d,
 int
 XFreePixmap (Display *dpy, Pixmap p)
 {
+  fprintf(stderr, "Call to unimplemented XFreePixmap\n");
   abort();
 }
 
@@ -286,7 +288,7 @@ jwxyz_render_text (Display *dpy, void *native_font,
                    const char *str, size_t len, Bool utf8, Bool antialias_p,
                    XCharStruct *cs, char **pixmap_ret)
 {
-  // TODO
+  fprintf(stderr, "Call to unimplemented jwxyz_render_text\n");
 }
 
 
@@ -298,11 +300,11 @@ jwxyz_load_native_font (Window window,
                         char **family_name_ret,
                         int *ascent_ret, int *descent_ret)
 {
-  // TODO:
+  fprintf(stderr, "Call to unimplemented jwxyz_load_native_font\n");
 }
 char *
 jwxyz_unicode_character_name (Display *, Font, unsigned long uc) {
-  // TODO
+  fprintf(stderr, "Call to unimplemented jwxyz_unicode_character_name\n");
 }
 
 
@@ -321,13 +323,16 @@ ignore_rotation_p (Display *dpy)
 void
 jwxyz_release_native_font (Display *dpy, void *native_font)
 {
-  // TODO:
+  fprintf(stderr, "Call to unimplemented jwxyz_release_native_font\n");
 }
 
 void
 jwxyz_bind_drawable (Display *dpy, Window w, Drawable d)
 {
-  // TODO
+  jwxyz_assert_gl ();
+
+  glViewport (0, 0, d->frame.width, d->frame.height);
+  jwxyz_set_matrices (dpy, d->frame.width, d->frame.height, False);
 }
 
 
@@ -342,6 +347,7 @@ validate_gl_visual (FILE *out, Screen *screen, const char *window_desc,
 Visual *
 get_gl_visual (Screen *screen)
 {
+  fprintf(stderr, "Call to unimplemented get_gl_visual\n");
   // todo; define a visual based on what EGL provides
   return NULL;
 }
