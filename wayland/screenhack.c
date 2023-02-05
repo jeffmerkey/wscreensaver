@@ -267,12 +267,9 @@ void
 jwxyz_logv (Bool error, const char *fmt, va_list args)
 {
   char buf[256];
-  int i;
   
   /* note: this intercepts fprintf somehow, so must use 'write' directly */
-  i = sprintf(buf, "%s", error ? "[error]: " : "[info ]: ");
-  i += vsprintf(buf + i, fmt, args);
-  
+  vsnprintf(buf, sizeof(buf), fmt, args);
   write(STDERR_FILENO, buf, strlen(buf));
 }
 
@@ -423,13 +420,139 @@ jwxyz_get_pos (Window w, XPoint *xvpos, XPoint *xp)
   }
 }
 
+struct resource_kv {
+  /* null key values signify wild card */
+  char *progname;
+  char *res_name;
+  char *progclass;
+  char *res_class;
+  char *value;
+};
+
+/* append-structured list of resource (name,class)->value pairs
+ * later values supersede earlier ones */
+static struct resource_kv *resource_list = NULL;
+static size_t resource_list_len = 0;
+static size_t resource_list_capacity = 0;
+
+static void
+add_cmdline_resource(char *res_name, char *value) {
+  if (resource_list_len == resource_list_capacity) {
+      resource_list_capacity = resource_list_capacity > 0 ? 2 * resource_list_capacity : 4;
+      /* malloc can fail */
+      resource_list = realloc(resource_list, sizeof(struct resource_kv)*resource_list_capacity);
+  }
+
+  if (*res_name == '.') {
+      res_name++;
+  }
+  /* todo: does *key ever happen ?*/
+  resource_list[resource_list_len].progname = strdup(progclass);
+  resource_list[resource_list_len].res_name = strdup(res_name);
+  resource_list[resource_list_len].progclass = strdup(progclass);
+  resource_list[resource_list_len].res_class = NULL;
+  resource_list[resource_list_len].value = strdup(value);
+  resource_list_len++;
+}
+
+static void
+add_default_resource(char *default_line) {
+  if (resource_list_len == resource_list_capacity) {
+      resource_list_capacity = resource_list_capacity > 0 ? 2 * resource_list_capacity : 4;
+      /* malloc can fail */
+      resource_list = realloc(resource_list, sizeof(struct resource_kv)*resource_list_capacity);
+  }
+
+  char *pn, *rn;
+  /* assuming well formed, no sanity checks right now */
+  char *tmp = strdup(default_line);
+  char *t2 = tmp;
+  while (*t2 != ':') {
+    if (!*t2) {
+        abort();
+    }
+    t2++;
+  }
+  *t2 = 0;
+  t2++;
+  while (*t2 == ' ' || *t2 == '\t') {
+     t2++;
+  }
+  /* maybe also trim trailing edge */
+  char *value = strdup(t2);
+
+  if (*tmp == '*') {
+    pn = NULL;
+    rn = strdup(tmp + 1);
+  } else {
+    char *t3 = tmp;
+    while (*t3 != '.') {
+      if (!*t3) {
+          abort();
+      }
+      t3++;
+    }
+    *t3 = 0;
+    t3++;
+    pn = strdup(tmp);
+    rn = strdup(t3);
+  }
+
+  free(tmp);
+
+  resource_list[resource_list_len].progname = pn;
+  resource_list[resource_list_len].res_name = rn;
+  resource_list[resource_list_len].progclass = strdup(progclass);
+  resource_list[resource_list_len].res_class = NULL;
+  resource_list[resource_list_len].value = value;
+  resource_list_len++;
+}
+
+static char *
+scan_resource(const char *progname, const char *res_name, const char *progclass, const char *res_class) {
+  size_t j = resource_list_len;
+  for (; j > 0; j--) {
+    struct resource_kv entry = resource_list[j - 1];
+    if (entry.progname && progname && strcmp(entry.progname, progname)) {
+      continue;
+    }
+    if (entry.res_name && res_name && strcmp(entry.res_name, res_name)) {
+      continue;
+    }
+    if (entry.progclass && progclass && strcmp(entry.progclass, progclass)) {
+      continue;
+    }
+    if (entry.res_class && res_class && strcmp(entry.res_class, res_class)) {
+      continue;
+    }
+    return entry.value;
+  }
+  return NULL;
+}
+
 char *
 get_string_resource (Display *dpy, char *res_name, char *res_class)
 {
-  // TODO: implement this
-  fprintf(stderr, "TODO\n");
-  abort();
-  return 0;
+  /* A very rough approximation of the XrmGetResource matching priority rules,
+   * which should be good enough for what xscreensaver uses.
+   */
+  if (!strcmp(res_class, "*")) {
+    res_class = NULL;
+  }
+  char *ret = NULL;
+  ret = scan_resource(progclass, res_name, progclass, res_class);
+  if (ret) {
+    return ret;
+  }
+  ret = scan_resource(progclass, res_name, NULL, NULL);
+  if (ret) {
+    return ret;
+  }
+  ret = scan_resource(NULL, res_name, NULL, NULL);
+  if (ret) {
+    return ret;
+  }
+  return NULL;
 }
 
 Bool 
@@ -611,31 +734,6 @@ merge_options (void)
   }
 }
 
-static void 
-usage(void) {
-  // TODO: this already exists in the original screenhack.c
-
-  fprintf(stdout, "Program: %s\n", progclass);
-
-  unsigned i;
-  for (i = 0; i < merged_options_size; i++) {
-//    char *defv = merged_defaults[i];
-//    while (*defv) {
-//      defv++;
-//      if (*(defv-1) == ':') {
-//        break;
-//      }
-//    }
-//    while (*defv == ' ' || *defv == '\t') {
-//      defv++;
-//    }
-    // todo: scan defaults list for option? */
-    fprintf(stdout, "Option: %s %s %d\n", merged_options[i].option,
-            merged_options[i].specifier, merged_options[i].argKind);
-  }
-
-}
-
 
 static void
 setup_egl(struct wl_display *wl_dpy) {
@@ -778,8 +876,63 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
   handle_closed,
 };
 
+
+static Bool
+usleep_and_process_events (Display *dpy,
+                           const struct xscreensaver_function_table *ft,
+                           Window window, fps_state *fpst, void *closure,
+                           unsigned long delay
+#ifdef DEBUG_PAIR
+                         , Window window2, fps_state *fpst2, void *closure2,
+                           unsigned long delay2
+#endif
+# ifdef HAVE_RECORD_ANIM
+                         , record_anim_state *anim_state
+# endif
+                           )
+{
+  do {
+    unsigned long quantum = 33333;  /* 30 fps */
+    if (quantum > delay)
+      quantum = delay;
+    delay -= quantum;
+
+//    XSync (dpy, False);
+
+#ifdef HAVE_RECORD_ANIM
+    if (anim_state) screenhack_record_anim (anim_state);
+#endif
+
+    if (quantum > 0)
+      {
+        usleep (quantum);
+        if (fpst) fps_slept (fpst, quantum);
+#ifdef DEBUG_PAIR
+        if (fpst2) fps_slept (fpst2, quantum);
+#endif
+      }
+
+    wl_display_dispatch(state.display);
+
+    // TODO: handle received configure events!
+
+
+//    if (! screenhack_table_handle_events (dpy, ft, window, closure
+//#ifdef DEBUG_PAIR
+//                                          , window2, closure2
+//#endif
+//                                          ))
+//      return False;
+  } while (delay > 0);
+
+
+  return True;
+}
+
+
 int main(int argc, char **argv) {
-  /* TODO: implement this. Also define 'get_float_resource/get_integer_resource/get_string_resource/get_boolean_resource' */
+
+  char version[255];
   struct xscreensaver_function_table *ft = xscreensaver_function_table;
   progname = argv[0];   /* reset later */
   progclass = ft->progclass;
@@ -789,12 +942,132 @@ int main(int argc, char **argv) {
 
   merge_options ();
 
+  /* Xt and xscreensaver predate the "--arg" convention, so convert
+     double dashes to single. */
+  {
+    int i;
+    for (i = 1; i < argc; i++) {
+      if (argv[i][0] == '-' && argv[i][1] == '-')
+        argv[i]++;
+    }
+  }
+
   /* Need to implement own command line handling here, as XtAppInitialize
    * is not available */
+  int i;
+  for (i = 0; merged_defaults[i]; i++) {
+      add_default_resource(merged_defaults[i]);
+  }
+  Bool show_help = False;
+  int j = 1;
+  while (j < argc) {
+    if (!strcmp(argv[j], "--help")) {
+      show_help = True;
+      break;
+    }
+    Bool found = False;
+    int k;
+    for (k = 0; k < merged_options_size; k++) {
+      if (!strcmp(argv[j], merged_options[k].option)) {
+        found = True;
+        if (merged_options[k].argKind == XrmoptionNoArg) {
+          add_cmdline_resource(merged_options[k].specifier, merged_options[k].value);
+          j++;
+        } else if (merged_options[k].argKind == XrmoptionSepArg) {
+          add_cmdline_resource(merged_options[k].specifier, argv[j+1]);
+          j += 2;
+        } else {
+          abort();
+        }
+        break;
+      }
+    }
+    if (!found) {
+      // foreach command line option
+      show_help = True;
+      break;
+    }
+  }
 
+  if (show_help)
+    {
+      int i;
+      int x = 18;
+      int end = 78;
+      Bool help_p = (!strcmp(argv[1], "-help") ||
+                     !strcmp(argv[1], "--help"));
+      fprintf (stderr, "%s\n", version);
+      fprintf (stderr, "\n\thttps://www.jwz.org/xscreensaver/\n\n");
 
-  // if fail
-  usage();
+      if (!help_p)
+        fprintf(stderr, "Unrecognised option: %s\n", argv[1]);
+      fprintf (stderr, "Options include: ");
+      for (i = 0; i < merged_options_size; i++)
+        {
+          char *sw = merged_options [i].option;
+          Bool argp = (merged_options [i].argKind == XrmoptionSepArg);
+          int size = strlen (sw) + (argp ? 6 : 0) + 2;
+          if (x + size >= end)
+            {
+              fprintf (stderr, "\n\t\t ");
+              x = 18;
+            }
+          x += size;
+          fprintf (stderr, "-%s", sw);  /* two dashes */
+          if (argp) fprintf (stderr, " <arg>");
+          if (i != merged_options_size - 1) fprintf (stderr, ", ");
+        }
+
+      fprintf (stderr, ".\n");
+
+#if 0
+      if (help_p)
+        {
+          fprintf (stderr, "\nResources:\n\n");
+          for (i = 0; i < merged_options_size; i++)
+            {
+              const char *opt = merged_options [i].option;
+              const char *res = merged_options [i].specifier + 1;
+              const char *val = merged_options [i].value;
+              char *s = get_string_resource (dpy, (char *) res, (char *) res);
+
+              if (s)
+                {
+                  int L = strlen(s);
+                while (L > 0 && (s[L-1] == ' ' || s[L-1] == '\t'))
+                  s[--L] = 0;
+                }
+
+              fprintf (stderr, "    %-16s %-18s ", opt, res);
+              if (merged_options [i].argKind == XrmoptionSepArg)
+                {
+                  fprintf (stderr, "[%s]", (s ? s : "?"));
+                }
+              else
+                {
+                  fprintf (stderr, "%s", (val ? val : "(null)"));
+                  if (val && s && !strcasecmp (val, s))
+                    fprintf (stderr, " [default]");
+                }
+              fprintf (stderr, "\n");
+            }
+          fprintf (stderr, "\n");
+        }
+#endif
+
+      exit (help_p ? 0 : 1);
+    }
+
+  {
+    char **s;
+    for (s = merged_defaults; *s; s++)
+      free(*s);
+  }
+
+  free (merged_options);
+  free (merged_defaults);
+  merged_options = 0;
+  merged_defaults = 0;
 
   state.display = wl_display_connect(NULL);
 
@@ -855,6 +1128,8 @@ int main(int argc, char **argv) {
     state.width = 600;
     state.height = 400;
   }
+  zwlr_layer_surface_v1_ack_configure(state.layer_surface, state.configure_serial);
+  state.needs_ack_configure = False;
 
   state.egl_window = wl_egl_window_create(state.surface, state.width, state.height);
   state.egl_surface = eglCreateWindowSurface(state.egl_dpy, state.egl_cfg, state.egl_window, NULL);
@@ -866,32 +1141,34 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  struct jwxyz_Drawable window;
-  window.type = WINDOW;
-  Drawable w = &window;
+  struct jwxyz_Drawable w;
+  w.type = WINDOW;
+  w.egl_surface = state.egl_surface;
+  // todo: convert `state` into a 'struct running_hack` that the window then links into?
+
+  Drawable window = &w;
   // this owns the EGL surface
 
   // this must be done after gl has been initialized
   // 'w' is a generic pointer that gets passed through
-  Display *disp = jwxyz_gl_make_display(w);
+  Display *disp = jwxyz_gl_make_display(window);
 
-  ft->init_cb(disp, w);
-
-
-//      void *closure = init_cb (dpy, window, ft->setup_arg);
-//      fps_state *fpst = fps_init (dpy, window);
-  fprintf(stderr, "We are configure\n");
-  // wl_egl_create()
-
-
-
-
-    /* This is the one and only place that the random-number generator is
-       seeded in any screenhack.  You do not need to seed the RNG again,
-       it is done for you before your code is invoked. */
+  /* This is the one and only place that the random-number generator is
+     seeded in any screenhack.  You do not need to seed the RNG again,
+     it is done for you before your code is invoked. */
 # undef ya_rand_init
-  ya_rand_init (0);
+ya_rand_init (0);
 
+  void *closure = ft->init_cb(disp, window);
+  fps_state *fpst = fps_init (disp, window);
+  unsigned long delay = ft->draw_cb (disp, window, closure);
+
+  if (!eglSwapBuffers(state.egl_dpy, state.egl_surface)) {
+    fprintf(stderr, "Failed to swap buffers\n");
+    return EXIT_FAILURE;
+  }
+
+  fprintf(stderr, "Have committed first buffer\n");
 
 #ifdef HAVE_RECORD_ANIM
   {
@@ -902,12 +1179,22 @@ int main(int argc, char **argv) {
 #endif
 
   while (state.running) {
-    // rate limited update loop, coalescing configure/resize ops?
-      // use poll instead of usleep, due to interruptions on resize, scale change, rotation...
-      // or maybe ppoll, for more accuracy?
+      if (! usleep_and_process_events (disp, ft,
+                                       window, fpst, closure, delay
+#ifdef HAVE_RECORD_ANIM
+                                       , anim_state
+#endif
+                                       ))
+        break;
 
-      // also rate limit using frame callbacks
-      break;
+      delay = ft->draw_cb (disp, window, closure);
+
+      // note: swapbuffers probably moves into something called by draw_cb
+      if (!eglSwapBuffers(state.egl_dpy, state.egl_surface)) {
+
+        fprintf(stderr, "Failed to swap buffers\n");
+        return EXIT_FAILURE;
+      }
   }
 
 
