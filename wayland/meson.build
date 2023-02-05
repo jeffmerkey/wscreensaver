@@ -1,5 +1,7 @@
 # use meson for the Wayland build at the moment, because all
-# the examples use this system. TODO: port to autoconf/Makefile.in
+# the examples use this system.
+
+# TODO: port to autoconf/Makefile.in
 
 project(
 	'xscreensaver-wayland',
@@ -19,6 +21,7 @@ wayland_egl = dependency('wayland-egl')
 egl = dependency('egl')
 GLU = dependency('glu')
 png = dependency('libpng')
+gio = dependency('gio-2.0')
 gdkpixbuf = dependency('gdk-pixbuf-2.0')
 cc = meson.get_compiler('c')
 math = cc.find_library('m')
@@ -54,6 +57,7 @@ build_flags = [
 
 wayland_scanner = find_program('wayland-scanner')
 
+# TODO: generate these only _ONCE_
 wayland_scanner_code = generator(
 	wayland_scanner,
 	output: '@BASENAME@-protocol.c',
@@ -86,6 +90,8 @@ endforeach
 xft_files = ['utils/xft.c', 'utils/xftwrap.c']
 anim_files = [] #'hacks/recanim.c']
 
+# TODO: mimic the way the Makefile builds lots of object files; then match Makefile names for things
+
 # TODO: make a shim for 'utils/visual.c', 'utils/xmu.c'
 hack_1_files = ['hacks/fps.c', 'utils/resources.c',
 		'utils/usleep.c', 'utils/yarandom.c', 'utils/utf8wc.c',
@@ -95,17 +101,31 @@ jwxyz = ['jwxyz/jwxyz-common.c', 'jwxyz/jwxyz-gl.c', 'jwxyz/jwxyz-timers.c']
 wayland_files = ['wayland/screenhack.c'] + jwxyz
 hack_files = wayland_files + hack_1_files
 xlock_files = wayland_files + ['hacks/xlockmore.c'] + color_files + hack_1_files
+png_files = ['hacks/ximage-loader.c']
 
 # also skips 
 fps_files = ['hacks/glx/texfont.c','hacks/fps.c', 'hacks/glx/fps-gl.c']
 glsl_files = ['hacks/glx/glsl-utils.c']
-glhack_files = wayland_files + ['hacks/xlockmore.c','hacks/glx/xlock-gl-utils.c','hacks/glx/erase-gl.c'] + hack_1_files + fps_files + glsl_files
+glhack_files = wayland_files + ['hacks/xlockmore.c','hacks/glx/xlock-gl-utils.c','hacks/glx/erase-gl.c'] + hack_1_files + fps_files + glsl_files + color_files
+
+track_files = ['hacks/glx/rotator.c','hacks/glx/trackball.c','hacks/glx/gltrackball.c']
+gears_files = ['hacks/glx/normals.c','hacks/glx/involute.c'] + track_files
+
+pipe_files = ['hacks/glx/pipeobjs.c','hacks/glx/sphere.c','hacks/glx/teapot.c','hacks/glx/normals.c','hacks/glx/buildlwo.c']
 
 hacks = [
-# 	['hyperball', ['hacks/hyperball.c'] + hack_files, []]
+	['hyperball', ['hacks/hyperball.c'] + hack_files, []],
 	['abstractile', ['hacks/abstractile.c'] + hack_files + color_files, []],
-	['voronoi', ['hacks/glx/voronoi.c'] + glhack_files + color_files, []]
-	# the above hacks are reused by others and should be included
+	['fuzzyflakes', ['hacks/fuzzyflakes.c'] + hack_files, []],
+	['substrate', ['hacks/substrate.c'] + hack_files, []],
+
+	['voronoi', ['hacks/glx/voronoi.c'] + glhack_files, []],
+	['gears', ['hacks/glx/gears.c', 'hacks/glx/tube.c'] + glhack_files + gears_files, []],
+	['queens', ['hacks/glx/queens.c', 'hacks/glx/chessmodels.c'] + glhack_files + track_files, []],
+	['quasicrystal', ['hacks/glx/quasicrystal.c'] + glhack_files + track_files, []],
+	['atlantis', ['hacks/glx/atlantis.c','hacks/glx/dolphin.c','hacks/glx/shark.c','hacks/glx/whale.c','hacks/glx/swim.c'] + glhack_files + png_files, []],
+	['splodesic', ['hacks/glx/splodesic.c'] + glhack_files + track_files, []],
+	['pipes', ['hacks/glx/pipes.c'] + glhack_files + pipe_files + track_files, []],
 ]
 
 # 
@@ -113,7 +133,7 @@ hacks = [
 include_dirs = ['../hacks','../utils', '../jwxyz']
 
 # for now, assume all external libraries are available -- but none which depend on X11
-base_deps = [math,wayland_client,wayland_egl,GLES,GL,egl,GLU,png,gdkpixbuf]
+base_deps = [math,wayland_client,wayland_egl,GLES,GL,egl,GLU,png,gdkpixbuf,gio]
 
 foreach hack : hacks
 	name = hack[0]
@@ -126,7 +146,7 @@ foreach hack : hacks
 	endforeach
 	
 	exec = executable(
-		'xwallsaver-'+name,
+		'xscreensaver-'+name,
 		files(mod_sources) + client_protos_src + client_protos_headers,
 # 		link_with: main_lib,
 		dependencies: deps + base_deps,
