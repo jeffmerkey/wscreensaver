@@ -117,7 +117,6 @@
       +    xlockmore_function_table.hack_draw => draw_HACK
  */
 
-#define DEBUG_PAIR
 
 #include <stdio.h>
 
@@ -127,6 +126,7 @@
 #include "version.h"
 // #include "vroot.h"
 #include "fps.h"
+#include "jwxyzI.h"
 
 #ifdef HAVE_RECORD_ANIM
 # include "recanim.h"
@@ -162,6 +162,34 @@ Bool mono_p;		/* used by hacks */
 #ifdef EXIT_AFTER
 static time_t exit_after;	/* Exit gracefully after N seconds */
 #endif
+
+
+struct screenhack_state {
+  struct wl_display *display;
+  struct wl_registry *registry;
+  struct wl_compositor *compositor;
+  struct zwlr_layer_shell_v1 *shell;
+  EGLDisplay egl_dpy;
+  EGLConfig egl_cfg;
+
+  char *target_output_name;
+  struct wl_output *target_output;
+
+  struct wl_surface *surface;
+  struct zwlr_layer_surface_v1 *layer_surface;
+  struct wl_egl_window *egl_window;
+  EGLContext egl_context;
+  EGLSurface egl_surface;
+
+  Bool needs_ack_configure;
+  uint32_t configure_serial;
+  int width;
+  int height;
+
+  Bool running;
+};
+
+static struct screenhack_state state = {0};
 
 /* Helper functions; maybe move into 'jwxyz-wayland.c' */
 
@@ -223,24 +251,29 @@ jwxyz_abort (const char *fmt, ...)
   if (!fmt || !*fmt)
     fmt = "abort";
 
+  char buf[256];
   va_list args;
   va_start (args, fmt);
-  vfprintf(stderr, fmt, args);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  write(STDERR_FILENO, buf, strlen(buf));
   va_end (args);
   
-  abort();
+  // calling abort() recurses here
+  (*(char*)NULL)++;
 }
 
 
 void
 jwxyz_logv (Bool error, const char *fmt, va_list args)
 {
-  /* Send error to Android device log */
-  fprintf(stderr, "%s", error ? "[error]: " : "[info ]: ");
-
-  vfprintf(stderr, fmt, args);
+  char buf[256];
+  int i;
   
-  abort();
+  /* note: this intercepts fprintf somehow, so must use 'write' directly */
+  i = sprintf(buf, "%s", error ? "[error]: " : "[info ]: ");
+  i += vsprintf(buf + i, fmt, args);
+  
+  write(STDERR_FILENO, buf, strlen(buf));
 }
 
 
@@ -477,13 +510,16 @@ get_float_resource (Display *dpy, char *res_name, char *res_class)
 
 
 static XrmOptionDescRec default_options [] = {
-  { "-root",	".root",		XrmoptionNoArg, "True" },
-  { "-window",	".root",		XrmoptionNoArg, "False" },
+//  { "-root",	".root",		XrmoptionNoArg, "True" },
+//  { "-window",	".root",		XrmoptionNoArg, "False" },
+//  { "-install",	".installColormap",	XrmoptionNoArg, "True" },
+//  { "-noinstall",".installColormap",	XrmoptionNoArg, "False" },
+//  { "-visual",	".visualID",		XrmoptionSepArg, 0 },
+//  { "-window-id", ".windowID",		XrmoptionSepArg, 0 },
+
+  { "-output-name", ".wlOutputName",	XrmoptionSepArg, 0 },
+
   { "-mono",	".mono",		XrmoptionNoArg, "True" },
-  { "-install",	".installColormap",	XrmoptionNoArg, "True" },
-  { "-noinstall",".installColormap",	XrmoptionNoArg, "False" },
-  { "-visual",	".visualID",		XrmoptionSepArg, 0 },
-  { "-window-id", ".windowID",		XrmoptionSepArg, 0 },
   { "-fps",	".doFPS",		XrmoptionNoArg, "True" },
   { "-no-fps",  ".doFPS",		XrmoptionNoArg, "False" },
 
@@ -575,39 +611,313 @@ merge_options (void)
   }
 }
 
-void usage() {
+static void 
+usage(void) {
+  // TODO: this already exists in the original screenhack.c
+
+  fprintf(stdout, "Program: %s\n", progclass);
+
   unsigned i;
-  for (i = 0; merged_options[i].option; i++) {
-    fprintf(stdout, "Option: %s\n", merged_options[i].option);
+  for (i = 0; i < merged_options_size; i++) {
+//    char *defv = merged_defaults[i];
+//    while (*defv) {
+//      defv++;
+//      if (*(defv-1) == ':') {
+//        break;
+//      }
+//    }
+//    while (*defv == ' ' || *defv == '\t') {
+//      defv++;
+//    }
+    // todo: scan defaults list for option? */
+    fprintf(stdout, "Option: %s %s %d\n", merged_options[i].option,
+            merged_options[i].specifier, merged_options[i].argKind);
+  }
+
+}
+
+
+static void
+setup_egl(struct wl_display *wl_dpy) {
+  const char *extensions_list = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+  Bool has_ext_platform = False, has_khr_platform = False;
+  if (strstr(extensions_list, "EGL_EXT_platform_wayland")) {
+    has_ext_platform = True;
+  }
+  if (strstr(extensions_list, "EGL_KHR_platform_wayland")) {
+    has_khr_platform = True;
+  }
+  if (!has_khr_platform && !has_ext_platform) {
+    fprintf(stderr, "No egl wayland\n");
+    abort();
+  }
+
+  state.egl_dpy = eglGetPlatformDisplay(
+    has_ext_platform ? EGL_PLATFORM_WAYLAND_EXT : EGL_PLATFORM_WAYLAND_KHR,
+    wl_dpy, NULL);
+  if (state.egl_dpy == EGL_NO_DISPLAY) {
+    fprintf(stderr, "Failed to get display\n");
+    abort();
+  }
+
+  int major_version = -1, minor_version = -1;
+  EGLBoolean ret = eglInitialize(state.egl_dpy, &major_version, &minor_version);
+  if (ret == EGL_FALSE) {
+    fprintf(stderr, "Failed to init display\n");
+    abort();
+  }
+
+  if (!eglBindAPI(EGL_OPENGL_API)) {
+    fprintf(stderr, "Failed to bind opengl api\n");
+    abort();
+  }
+
+  int count= 0;
+  if (!eglGetConfigs(state.egl_dpy, NULL, 0, &count) || count < 1) {
+    fprintf(stderr, "Failed to get configs\n");
+    abort();
+  }
+
+  EGLConfig *configs = calloc(count, sizeof(EGLConfig));
+  if (!configs) {
+      fprintf(stderr, "Failed to allocate config list");
+      abort();
+    }
+
+  EGLint config_attrib_list[] = {
+      EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+      EGL_RED_SIZE, 1,
+      EGL_GREEN_SIZE, 1,
+      EGL_BLUE_SIZE, 1,
+      EGL_DEPTH_SIZE, 1,
+      EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+      EGL_NONE
+  };
+
+  int nret = 0;
+  if (!eglChooseConfig(state.egl_dpy, config_attrib_list, configs, count, &nret) || nret < 1) {
+      fprintf(stderr, "Failed to get matching config\n");
+      abort();
+  }
+  state.egl_cfg = configs[0];
+  free(configs);
+}
+
+static void noop() {
+
+}
+
+static void
+handle_output_name(void *data,
+             struct wl_output *wl_output,
+             const char *name) {
+  if (state.target_output_name && !strcmp(name, state.target_output_name)) {
+    if (state.target_output && state.target_output != wl_output) {
+      fprintf(stderr, "Encountered second output with name %s, ignoring\n", state.target_output_name);
+      wl_output_destroy(wl_output);
+      return;
+    }
+    state.target_output = wl_output;
+  } else {
+    wl_output_destroy(wl_output);
   }
 }
 
+struct wl_output_listener output_listener = {
+  noop, // geometry
+  noop, // mode
+  noop, // done
+  noop, // scale
+  handle_output_name,
+  noop, // description
+};
+
+static void registry_global(void *data, struct wl_registry *registry,
+     uint32_t name, const char *interface, uint32_t version) {
+  if (strcmp(interface, wl_compositor_interface.name) == 0) {
+       state.compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 1);
+  } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        struct wl_seat *seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+        (void)seat;
+        // TODO: handle input if available
+  } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
+        state.shell = wl_registry_bind(registry, name,
+                      &zwlr_layer_shell_v1_interface, 1);
+  } else if (strcmp(interface, wl_output_interface.name) == 0 && version >= 4) {
+      // require version 4, which has a 'name' event
+        struct wl_output *output = wl_registry_bind(registry, name,
+                      &wl_output_interface, 4);
+        wl_output_add_listener(output, &output_listener, NULL);
+    }
+}
+
+static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {}
+
+static const struct wl_registry_listener registry_listener = {
+    registry_global,
+    registry_global_remove
+};
+
+
+static void handle_configure(void *data,
+     struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1,
+     uint32_t serial, uint32_t width, uint32_t height) {
+  state.needs_ack_configure = True;
+  state.configure_serial = serial;
+  state.width = width;
+  state.height = height;
+}
+static void
+handle_closed(void *data,
+      struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1) {
+  state.running = False;
+}
+
+static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+  handle_configure,
+  handle_closed,
+};
+
 int main(int argc, char **argv) {
-    /* TODO: implement this. Also define 'get_float_resource/get_integer_resource/get_string_resource/get_boolean_resource' */
-    struct xscreensaver_function_table *ft = xscreensaver_function_table;
-    
-    merge_options ();
-    
-    /* Need to implement own command line handling here, as XtAppInitialize
-     * is not available */
-    
-    // if fail
-    usage();
-    
-    // then parse/handle command line
-    
-    // get resource string -- scans table of actual values, after parsing
-    
-// Abstractile: from the XScreenSaver 6.06 distribution (11-Dec-2022)
-// 
-// 	https://www.jwz.org/xscreensaver/
-// 
-// Unrecognised option: -tile
-// Options include: --root, --window, --mono, --install, --noinstall, 
-// 		--visual <arg>, --window-id <arg>, --fps, --no-fps, --pair, 
-// 		--sleep <arg>, --speed <arg>, --tile <arg>.
-// TODO: build string resource table from command line, incl. defaults?
-    
+  /* TODO: implement this. Also define 'get_float_resource/get_integer_resource/get_string_resource/get_boolean_resource' */
+  struct xscreensaver_function_table *ft = xscreensaver_function_table;
+  progname = argv[0];   /* reset later */
+  progclass = ft->progclass;
+
+  if (ft->setup_cb)
+    ft->setup_cb (ft, ft->setup_arg);
+
+  merge_options ();
+
+  /* Need to implement own command line handling here, as XtAppInitialize
+   * is not available */
+
+
+  // if fail
+  usage();
+
+  state.display = wl_display_connect(NULL);
+
+  setup_egl(state.display);
+
+  state.target_output_name = NULL;//"WL-1"; // return to NULL
+
+  state.registry = wl_display_get_registry(state.display);
+  wl_registry_add_listener(state.registry, &registry_listener, NULL);
+  wl_display_roundtrip(state.display);
+  if (!state.compositor) {
+    fprintf(stderr, "Wayland compositor is missing wl_compositor interface");
+    return EXIT_FAILURE;
+  }
+  if (!state.shell) {
+    fprintf(stderr, "Wayland compositor is missing layer-shell interface");
+    return EXIT_FAILURE;
+  }
+
+  if (state.target_output_name) {
+    /* second roundtrip: receive names from the outputs; if one matches,
+     * it will set state.target_output */
+    wl_display_roundtrip(state.display);
+
+    if (!state.target_output) {
+      fprintf(stderr, "No output with name '%s' was found. Run `wayland-info` to see a list of outputs and their names.\n", state.target_output_name);
+      return EXIT_FAILURE;
+    }
+  }
+
+  state.running = True;
+
+  state.surface = wl_compositor_create_surface(state.compositor);
+
+  /* if `state.target_output` is NULL, this picks compositor preferred output */
+  state.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+    state.shell, state.surface, state.target_output,
+    ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "wallpaper");
+  // no size preference
+  zwlr_layer_surface_v1_set_size(state.layer_surface, 0, 0);
+  zwlr_layer_surface_v1_set_anchor(state.layer_surface,
+    ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT |
+    ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+  zwlr_layer_surface_v1_set_exclusive_zone(state.layer_surface, -1);
+  zwlr_layer_surface_v1_add_listener(state.layer_surface,
+    &layer_surface_listener, NULL);
+  wl_surface_commit(state.surface);
+
+  /* after this roundtrip, should have received a configure event */
+  wl_display_roundtrip(state.display);
+  if (!state.needs_ack_configure) {
+      fprintf(stderr, "Did not received expected configure event\n");
+      return EXIT_FAILURE;
+  }
+
+  if (state.width == 0 && state.height == 0) {
+    /* (0,0) signifies client decision */
+    state.width = 600;
+    state.height = 400;
+  }
+
+  state.egl_window = wl_egl_window_create(state.surface, state.width, state.height);
+  state.egl_surface = eglCreateWindowSurface(state.egl_dpy, state.egl_cfg, state.egl_window, NULL);
+  state.egl_context = eglCreateContext(state.egl_dpy, state.egl_cfg, EGL_NO_CONTEXT, NULL);
+
+  if (!eglMakeCurrent(state.egl_dpy, state.egl_surface, state.egl_surface, state.egl_context)) {
+
+    fprintf(stderr, "Failed to make a context current\n");
+    return EXIT_FAILURE;
+  }
+
+  struct jwxyz_Drawable window;
+  window.type = WINDOW;
+  Drawable w = &window;
+  // this owns the EGL surface
+
+  // this must be done after gl has been initialized
+  // 'w' is a generic pointer that gets passed through
+  Display *disp = jwxyz_gl_make_display(w);
+
+  ft->init_cb(disp, w);
+
+
+//      void *closure = init_cb (dpy, window, ft->setup_arg);
+//      fps_state *fpst = fps_init (dpy, window);
+  fprintf(stderr, "We are configure\n");
+  // wl_egl_create()
+
+
+
+
+    /* This is the one and only place that the random-number generator is
+       seeded in any screenhack.  You do not need to seed the RNG again,
+       it is done for you before your code is invoked. */
+# undef ya_rand_init
+  ya_rand_init (0);
+
+
+#ifdef HAVE_RECORD_ANIM
+  {
+    int frames = get_integer_resource (dpy, "recordAnim", "Integer");
+    if (frames > 0)
+      anim_state = screenhack_record_anim_init (xgwa.screen, window, frames);
+  }
+#endif
+
+  while (state.running) {
+    // rate limited update loop, coalescing configure/resize ops?
+      // use poll instead of usleep, due to interruptions on resize, scale change, rotation...
+      // or maybe ppoll, for more accuracy?
+
+      // also rate limit using frame callbacks
+      break;
+  }
+
+
+
+#ifdef HAVE_RECORD_ANIM
+  if (anim_state) screenhack_record_anim_free (anim_state);
+#endif
+
+  wl_display_disconnect(state.display);
+    return EXIT_SUCCESS;
 }
 
 

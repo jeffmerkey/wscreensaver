@@ -120,7 +120,7 @@ foreach hack : hacks
 	endforeach
 	
 	exec = executable(
-		'xscreensaver-wayland-'+name,
+		'xwallsaver-'+name,
 		files(mod_sources) + client_protos_src + client_protos_headers,
 # 		link_with: main_lib,
 		dependencies: deps + base_deps,
