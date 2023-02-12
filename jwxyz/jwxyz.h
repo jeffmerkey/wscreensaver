@@ -39,7 +39,9 @@
 
 extern void jwxyz_abort(const char *fmt, ...) __dead2;
 #define abort() jwxyz_abort("abort in %s:%d", __FUNCTION__, __LINE__)
+#ifndef HAVE_WAYLAND
 #define exit(N) jwxyz_abort("abort in %s:%d", __FUNCTION__, __LINE__)
+#endif
 
 typedef int Bool;
 typedef int Status;

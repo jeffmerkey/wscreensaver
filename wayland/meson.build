@@ -112,12 +112,14 @@ track_files = ['hacks/glx/rotator.c','hacks/glx/trackball.c','hacks/glx/gltrackb
 gears_files = ['hacks/glx/normals.c','hacks/glx/involute.c'] + track_files
 
 pipe_files = ['hacks/glx/pipeobjs.c','hacks/glx/sphere.c','hacks/glx/teapot.c','hacks/glx/normals.c','hacks/glx/buildlwo.c']
+spl_files = ['utils/spline.c']
 
 hacks = [
 	['hyperball', ['hacks/hyperball.c'] + hack_files, []],
 	['abstractile', ['hacks/abstractile.c'] + hack_files + color_files, []],
 	['fuzzyflakes', ['hacks/fuzzyflakes.c'] + hack_files, []],
 	['substrate', ['hacks/substrate.c'] + hack_files, []],
+	['starfish', ['hacks/starfish.c'] + hack_files + color_files + spl_files, []],
 
 	['voronoi', ['hacks/glx/voronoi.c'] + glhack_files, []],
 	['gears', ['hacks/glx/gears.c', 'hacks/glx/tube.c'] + glhack_files + gears_files, []],
@@ -126,6 +128,8 @@ hacks = [
 	['atlantis', ['hacks/glx/atlantis.c','hacks/glx/dolphin.c','hacks/glx/shark.c','hacks/glx/whale.c','hacks/glx/swim.c'] + glhack_files + png_files, []],
 	['splodesic', ['hacks/glx/splodesic.c'] + glhack_files + track_files, []],
 	['pipes', ['hacks/glx/pipes.c'] + glhack_files + pipe_files + track_files, []],
+	['polyhedra', ['hacks/glx/polyhedra.c','hacks/glx/polyhedra-gl.c','hacks/glx/normals.c','hacks/glx/teapot.c'] + glhack_files + track_files, []],
+	
 ]
 
 # 

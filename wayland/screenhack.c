@@ -333,6 +333,8 @@ jwxyz_bind_drawable (Display *dpy, Window w, Drawable d)
 
   glViewport (0, 0, d->frame.width, d->frame.height);
   jwxyz_set_matrices (dpy, d->frame.width, d->frame.height, False);
+
+  // TODO: put framebuffer binding here
 }
 
 
@@ -1052,6 +1054,10 @@ int main(int argc, char **argv) {
           add_cmdline_resource(merged_options[k].specifier, merged_options[k].value);
           j++;
         } else if (merged_options[k].argKind == XrmoptionSepArg) {
+          if (j + 1 >= argc) {
+            found = False;
+            break;
+          }
           add_cmdline_resource(merged_options[k].specifier, argv[j+1]);
           j += 2;
         } else {
@@ -1065,6 +1071,25 @@ int main(int argc, char **argv) {
       show_help = True;
       break;
     }
+  }
+
+
+  {
+    char *v = (char *) strdup(strchr(screensaver_id, ' '));
+    char *s1, *s2, *s3, *s4;
+    const char *ot = get_string_resource (NULL, "title", "Title");
+    s1 = (char *) strchr(v,  ' '); s1++;
+    s2 = (char *) strchr(s1, ' ');
+    s3 = (char *) strchr(v,  '('); s3++;
+    s4 = (char *) strchr(s3, ')');
+    *s2 = 0;
+    *s4 = 0;
+    if (ot && !*ot) ot = 0;
+    sprintf (version, "%.50s%s%s: from the XScreenSaver %s distribution (%s)",
+             (ot ? ot : ""),
+             (ot ? ": " : ""),
+             progclass, s1, s3);
+    free(v);
   }
 
   if (show_help)
@@ -1253,7 +1278,43 @@ ya_rand_init (0);
 
   void *closure = init_cb(disp, window, ft->setup_arg);
   fps_state *fpst = fps_init (disp, window);
+
+  GLuint frameBuffer;
+  glGenFramebuffers(1, &frameBuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
+  GLuint texColorBuffer;
+  glGenTextures(1, &texColorBuffer);
+  glBindTexture(GL_TEXTURE_2D, texColorBuffer);
+  glTexImage2D(
+      GL_TEXTURE_2D, 0, GL_RGB, w.frame.width, w.frame.height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL
+  );
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glFramebufferTexture2D(
+      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColorBuffer, 0
+  );
+  GLuint rboDepthStencil;
+  glGenRenderbuffers(1, &rboDepthStencil);
+  glBindRenderbuffer(GL_RENDERBUFFER, rboDepthStencil);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w.frame.width, w.frame.height);
+  glFramebufferRenderbuffer(
+      GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rboDepthStencil
+  );
+
+  glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
+
   unsigned long delay = ft->draw_cb (disp, window, closure);
+
+  jwxyz_gl_flush (disp);
+  glFinish();
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  glBlitNamedFramebuffer(frameBuffer,
+          0,
+          0, 0, w.frame.width, w.frame.height,
+          0, 0, w.frame.width, w.frame.height,
+          GL_COLOR_BUFFER_BIT,
+          GL_NEAREST);
 
   if (!eglSwapBuffers(state.egl_dpy, state.egl_surface)) {
     fprintf(stderr, "Failed to swap buffers\n");
@@ -1282,7 +1343,21 @@ ya_rand_init (0);
 
       fprintf(stderr, "Drawing, iteration %d\n", iter++);
 
+
+      glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
+
       delay = ft->draw_cb (disp, window, closure);
+      jwxyz_gl_flush (disp);
+
+      glFinish();
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+      glBlitNamedFramebuffer(frameBuffer,
+              0,
+              0, 0, w.frame.width, w.frame.height,
+              0, 0, w.frame.width, w.frame.height,
+              GL_COLOR_BUFFER_BIT,
+              GL_NEAREST);
 
       // note: swapbuffers probably moves into something called by draw_cb
       if (!eglSwapBuffers(state.egl_dpy, state.egl_surface)) {
