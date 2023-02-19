@@ -142,6 +142,8 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include <string.h>
+#include <errno.h>
 
 #ifndef isupper
 # define isupper(c)  ((c) >= 'A' && (c) <= 'Z')
@@ -164,36 +166,7 @@ Bool mono_p;		/* used by hacks */
 static time_t exit_after;	/* Exit gracefully after N seconds */
 #endif
 
-
-struct screenhack_state {
-  struct wl_display *display;
-  struct wl_registry *registry;
-  struct wl_compositor *compositor;
-  struct zwlr_layer_shell_v1 *shell;
-  EGLDisplay egl_dpy;
-  EGLConfig egl_cfg;
-
-  char *target_output_name;
-  struct wl_output *target_output;
-
-  struct wl_surface *surface;
-  struct zwlr_layer_surface_v1 *layer_surface;
-  struct wl_egl_window *egl_window;
-  EGLContext egl_context;
-  EGLSurface egl_surface;
-
-  Bool needs_ack_configure;
-  uint32_t configure_serial;
-  int width;
-  int height;
-
-  Bool running;
-};
-
-static struct screenhack_state state = {0};
-
-/* Helper functions; maybe move into 'jwxyz-wayland.c' */
-
+struct output_hack;
 
 struct jwxyz_Drawable {
   enum { WINDOW, PIXMAP } type;
@@ -208,7 +181,7 @@ struct jwxyz_Drawable {
   };
   union {
     struct {
-      struct running_hack *rh;
+      struct output_hack *rh;
       int last_mouse_x, last_mouse_y;
     } window;
     struct {
@@ -216,6 +189,51 @@ struct jwxyz_Drawable {
     } pixmap;
   };
 };
+
+
+// screenhack_state + output_hack together are like running_hack in android
+struct output_hack {
+  struct wl_list link;
+  struct screenhack_state *state;
+
+  struct wl_output *output;
+
+  struct wl_surface *surface;
+  struct zwlr_layer_surface_v1 *layer_surface;
+  struct wl_egl_window *egl_window;
+  EGLContext egl_context;
+  EGLSurface egl_surface;
+  GLuint frameBuffer;
+
+  struct jwxyz_Drawable window;
+  Display *display;
+  /* the state for the hack running on this output */
+  void *closure;
+  fps_state *fpst;
+
+  Bool needs_ack_configure;
+  uint32_t configure_serial;
+  int width;
+  int height;
+};
+
+struct screenhack_state {
+  struct wl_display *display;
+  struct wl_registry *registry;
+  struct wl_compositor *compositor;
+  struct zwlr_layer_shell_v1 *shell;
+  EGLDisplay egl_dpy;
+  EGLConfig egl_cfg;
+
+  char *target_output_name;
+  struct wl_list outputs; /* of `struct output_hack` */
+
+  Bool running;
+};
+
+static struct screenhack_state state = {0};
+
+/* Helper functions; maybe move into 'jwxyz-wayland.c' */
 
 Pixmap
 XCreatePixmap (Display *dpy, Drawable d,
@@ -880,25 +898,73 @@ setup_egl(struct wl_display *wl_dpy) {
   free(configs);
 }
 
+static void handle_configure(void *data,
+     struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1,
+     uint32_t serial, uint32_t width, uint32_t height) {
+  struct output_hack *output = data;
+  output->needs_ack_configure = True;
+  output->configure_serial = serial;
+  output->width = width;
+  output->height = height;
+}
+static void
+handle_closed(void *data,
+      struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1) {
+  // TODO: exit program, or close window; what does this mean for layer shell bg?
+}
+
+static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+  handle_configure,
+  handle_closed,
+};
+
 static void
 noop(void) {
 
 }
 
 static void
+output_hack_destroy(struct output_hack *output) {
+
+    if (output->closure) {
+        xscreensaver_function_table->free_cb (output->display, &output->window, output->closure);
+    }
+    wl_list_remove(&output->link);
+    free(output);
+}
+
+static void
 handle_output_name(void *data,
              struct wl_output *wl_output,
              const char *name) {
-  if (state.target_output_name && !strcmp(name, state.target_output_name)) {
-    if (state.target_output && state.target_output != wl_output) {
-      fprintf(stderr, "Encountered second output with name %s, ignoring\n", state.target_output_name);
-      wl_output_destroy(wl_output);
-      return;
-    }
-    state.target_output = wl_output;
-  } else {
-    wl_output_destroy(wl_output);
+  struct output_hack *output = data;
+  if (state.target_output_name && strcmp(name, state.target_output_name)) {
+     /* does not match name filter, delete output */
+     output_hack_destroy(output);
+     return;
   }
+
+  /* time to initialize the output */
+  if (!state.compositor || !state.shell) {
+     fprintf(stderr, "Missing compositor or shell after first roundtrip\n");
+     exit(EXIT_FAILURE);
+  }
+
+  output->surface = wl_compositor_create_surface(state.compositor);
+
+  /* if `state.target_output` is NULL, this picks compositor preferred output */
+  output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+    state.shell, output->surface, output->output,
+    ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "wallpaper");
+  // 0,0 => no size preference
+  zwlr_layer_surface_v1_set_size(output->layer_surface, 0, 0);
+  zwlr_layer_surface_v1_set_anchor(output->layer_surface,
+    ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT |
+    ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+  zwlr_layer_surface_v1_set_exclusive_zone(output->layer_surface, -1);
+  zwlr_layer_surface_v1_add_listener(output->layer_surface,
+    &layer_surface_listener, output);
+  wl_surface_commit(output->surface);
 }
 
 struct wl_output_listener output_listener = {
@@ -924,8 +990,14 @@ static void registry_global(void *data, struct wl_registry *registry,
   } else if (strcmp(interface, wl_output_interface.name) == 0 && version >= 4) {
       // require version 4, which has a 'name' event
         struct wl_output *output = wl_registry_bind(registry, name,
-                      &wl_output_interface, 4);
-        wl_output_add_listener(output, &output_listener, NULL);
+		      &wl_output_interface, 4);
+	struct output_hack *out = calloc(1, sizeof(struct output_hack));
+	wl_list_insert(&state.outputs, &out->link);
+	out->state = &state;
+	out->output = output;
+	/* all other fields zerod */
+
+	wl_output_add_listener(output, &output_listener, out);
     }
 }
 
@@ -937,30 +1009,12 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 
-static void handle_configure(void *data,
-     struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1,
-     uint32_t serial, uint32_t width, uint32_t height) {
-  state.needs_ack_configure = True;
-  state.configure_serial = serial;
-  state.width = width;
-  state.height = height;
-}
-static void
-handle_closed(void *data,
-      struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1) {
-  state.running = False;
-}
-
-static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
-  handle_configure,
-  handle_closed,
-};
-
-
 static Bool
-usleep_and_process_events (Display *dpy,
-                           const struct xscreensaver_function_table *ft,
-                           Window window, fps_state *fpst, void *closure,
+usleep_and_process_events (//Display *dpy,
+//                           const struct xscreensaver_function_table *ft,
+//                           Window window,
+                           fps_state *fpst,
+//                           void *closure,
                            unsigned long delay
 #ifdef DEBUG_PAIR
                          , Window window2, fps_state *fpst2, void *closure2,
@@ -971,39 +1025,7 @@ usleep_and_process_events (Display *dpy,
 # endif
                            )
 {
-  do {
-    unsigned long quantum = 33333;  /* 30 fps */
-    if (quantum > delay)
-      quantum = delay;
-    delay -= quantum;
 
-//    XSync (dpy, False);
-
-#ifdef HAVE_RECORD_ANIM
-    if (anim_state) screenhack_record_anim (anim_state);
-#endif
-
-    if (quantum > 0)
-      {
-        usleep (quantum);
-        if (fpst) fps_slept (fpst, quantum);
-#ifdef DEBUG_PAIR
-        if (fpst2) fps_slept (fpst2, quantum);
-#endif
-      }
-
-    wl_display_dispatch(state.display);
-
-    // TODO: handle received configure events!
-
-
-//    if (! screenhack_table_handle_events (dpy, ft, window, closure
-//#ifdef DEBUG_PAIR
-//                                          , window2, closure2
-//#endif
-//                                          ))
-//      return False;
-  } while (delay > 0);
 
 
   return True;
@@ -1172,6 +1194,7 @@ int main(int argc, char **argv) {
   merged_options = 0;
   merged_defaults = 0;
 
+  wl_list_init(&state.outputs);
   state.display = wl_display_connect(NULL);
 
   setup_egl(state.display);
@@ -1191,137 +1214,26 @@ int main(int argc, char **argv) {
   }
 
   if (state.target_output_name) {
-    /* second roundtrip: receive names from the outputs; if one matches,
-     * it will set state.target_output */
+    /* second roundtrip: receive names from the outputs; those not matching
+     * will be removed from the output list */
     wl_display_roundtrip(state.display);
 
-    if (!state.target_output) {
-      fprintf(stderr, "No output with name '%s' was found. Run `wayland-info` to see a list of outputs and their names.\n", state.target_output_name);
-      return EXIT_FAILURE;
+    if (wl_list_empty(&state.outputs)) {
+       fprintf(stderr, "No output with name '%s' was found. Run `wayland-info` to see a list of outputs and their names.\n", state.target_output_name);
+       return EXIT_FAILURE;
     }
   }
 
   state.running = True;
 
-  state.surface = wl_compositor_create_surface(state.compositor);
-
-  /* if `state.target_output` is NULL, this picks compositor preferred output */
-  state.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
-    state.shell, state.surface, state.target_output,
-    ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "wallpaper");
-  // no size preference
-  zwlr_layer_surface_v1_set_size(state.layer_surface, 0, 0);
-  zwlr_layer_surface_v1_set_anchor(state.layer_surface,
-    ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT |
-    ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
-  zwlr_layer_surface_v1_set_exclusive_zone(state.layer_surface, -1);
-  zwlr_layer_surface_v1_add_listener(state.layer_surface,
-    &layer_surface_listener, NULL);
-  wl_surface_commit(state.surface);
-
   /* after this roundtrip, should have received a configure event */
   wl_display_roundtrip(state.display);
-  if (!state.needs_ack_configure) {
-      fprintf(stderr, "Did not received expected configure event\n");
-      return EXIT_FAILURE;
-  }
-
-  if (state.width == 0 && state.height == 0) {
-    /* (0,0) signifies client decision */
-    state.width = 600;
-    state.height = 400;
-  }
-  zwlr_layer_surface_v1_ack_configure(state.layer_surface, state.configure_serial);
-  state.needs_ack_configure = False;
-
-  state.egl_window = wl_egl_window_create(state.surface, state.width, state.height);
-  state.egl_surface = eglCreateWindowSurface(state.egl_dpy, state.egl_cfg, (EGLNativeWindowType)state.egl_window, NULL);
-  state.egl_context = eglCreateContext(state.egl_dpy, state.egl_cfg, EGL_NO_CONTEXT, NULL);
-
-  if (!eglMakeCurrent(state.egl_dpy, state.egl_surface, state.egl_surface, state.egl_context)) {
-
-    fprintf(stderr, "Failed to make a context current\n");
-    return EXIT_FAILURE;
-  }
-
-  struct jwxyz_Drawable w;
-  w.type = WINDOW;
-  w.frame.x = 0;
-  w.frame.y = 0;
-  w.frame.width = state.width;
-  w.frame.height = state.height;
-  w.egl_surface = state.egl_surface;
-  w.window.last_mouse_x = 0;
-  w.window.last_mouse_y = 0;
-  w.window.rh = NULL;
-  // todo: convert `state` into a 'struct running_hack` that the window then links into?
-
-  Drawable window = &w;
-  // this owns the EGL surface
-
-  // this must be done after gl has been initialized
-  // 'w' is a generic pointer that gets passed through
-  Display *disp = jwxyz_gl_make_display(window);
 
   /* This is the one and only place that the random-number generator is
      seeded in any screenhack.  You do not need to seed the RNG again,
      it is done for you before your code is invoked. */
 # undef ya_rand_init
 ya_rand_init (0);
-
-  /* Kludge: even though the init_cb functions are declared to take 2 args,
-     actually call them with 3, for the benefit of xlockmore_init() and
-     xlockmore_setup().
-   */
-  void *(*init_cb) (Display *, Window, void *) =
-    (void *(*) (Display *, Window, void *)) ft->init_cb;
-
-  void *closure = init_cb(disp, window, ft->setup_arg);
-  fps_state *fpst = fps_init (disp, window);
-
-  GLuint frameBuffer;
-  glGenFramebuffers(1, &frameBuffer);
-  glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
-  GLuint texColorBuffer;
-  glGenTextures(1, &texColorBuffer);
-  glBindTexture(GL_TEXTURE_2D, texColorBuffer);
-  glTexImage2D(
-      GL_TEXTURE_2D, 0, GL_RGB, w.frame.width, w.frame.height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL
-  );
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glFramebufferTexture2D(
-      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColorBuffer, 0
-  );
-  GLuint rboDepthStencil;
-  glGenRenderbuffers(1, &rboDepthStencil);
-  glBindRenderbuffer(GL_RENDERBUFFER, rboDepthStencil);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w.frame.width, w.frame.height);
-  glFramebufferRenderbuffer(
-      GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rboDepthStencil
-  );
-
-  glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
-
-  unsigned long delay = ft->draw_cb (disp, window, closure);
-
-  jwxyz_gl_flush (disp);
-  glFinish();
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-  glBlitNamedFramebuffer(frameBuffer,
-          0,
-          0, 0, w.frame.width, w.frame.height,
-          0, 0, w.frame.width, w.frame.height,
-          GL_COLOR_BUFFER_BIT,
-          GL_NEAREST);
-
-  if (!eglSwapBuffers(state.egl_dpy, state.egl_surface)) {
-    fprintf(stderr, "Failed to swap buffers\n");
-    return EXIT_FAILURE;
-  }
-
-  fprintf(stderr, "Have committed first buffer\n");
 
 #ifdef HAVE_RECORD_ANIM
   {
@@ -1331,43 +1243,188 @@ ya_rand_init (0);
   }
 #endif
 
+  unsigned long delay = 1;
+
   int iter = 0;
   while (state.running) {
-      if (! usleep_and_process_events (disp, ft,
-                                       window, fpst, closure, delay
-#ifdef HAVE_RECORD_ANIM
-                                       , anim_state
-#endif
-                                       ))
-        break;
+      do {
+        // from old 'usleep-and-process-events'
+        unsigned long quantum = 33333;  /* 30 fps */
+        if (quantum > delay)
+          quantum = delay;
+        delay -= quantum;
 
-      fprintf(stderr, "Drawing, iteration %d\n", iter++);
+    #ifdef HAVE_RECORD_ANIM
+        if (anim_state) screenhack_record_anim (anim_state);
+    #endif
+
+        if (quantum > 0)
+          {
+            usleep (quantum);
+
+            // todo: apply to all outputs?
+//            if (fpst) fps_slept (fpst, quantum);
+    #ifdef DEBUG_PAIR
+            if (fpst2) fps_slept (fpst2, quantum);
+    #endif
+          }
+
+        if (wl_display_dispatch(state.display) == -1 && errno != EINTR) {
+            state.running = False;
+            break;
+        }
+      } while (delay > 0);
 
 
-      glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
+    struct output_hack *output;
+    wl_list_for_each(output, &state.outputs, link) {
 
-      delay = ft->draw_cb (disp, window, closure);
-      jwxyz_gl_flush (disp);
+      if (!output->egl_window) {
+          if (!output->needs_ack_configure)  {
+            // wait for first configure
+            continue;
+          }
 
-      glFinish();
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+          // setup the output
+          if (output->width == 0 && output->height == 0) {
+            /* (0,0) signifies client decision */
+            output->width = 600;
+            output->height = 400;
+          }
+          zwlr_layer_surface_v1_ack_configure(output->layer_surface, output->configure_serial);
+          output->needs_ack_configure = False;
 
-      glBlitNamedFramebuffer(frameBuffer,
-              0,
-              0, 0, w.frame.width, w.frame.height,
-              0, 0, w.frame.width, w.frame.height,
-              GL_COLOR_BUFFER_BIT,
-              GL_NEAREST);
+          output->egl_window = wl_egl_window_create(output->surface, output->width, output->height);
+          output->egl_surface = eglCreateWindowSurface(state.egl_dpy, state.egl_cfg, (EGLNativeWindowType)output->egl_window, NULL);
+          output->egl_context = eglCreateContext(state.egl_dpy, state.egl_cfg, EGL_NO_CONTEXT, NULL);
 
-      // note: swapbuffers probably moves into something called by draw_cb
-      if (!eglSwapBuffers(state.egl_dpy, state.egl_surface)) {
+          if (!eglMakeCurrent(state.egl_dpy, output->egl_surface, output->egl_surface, output->egl_context)) {
 
-        fprintf(stderr, "Failed to swap buffers\n");
-        return EXIT_FAILURE;
+            fprintf(stderr, "Failed to make a context current\n");
+            return EXIT_FAILURE;
+          }
+
+          output->window.type = WINDOW;
+          output->window.frame.x = 0;
+          output->window.frame.y = 0;
+          output->window.frame.width = output->width;
+          output->window.frame.height = output->height;
+          output->window.egl_surface = output->egl_surface;
+          output->window.window.last_mouse_x = 0;
+          output->window.window.last_mouse_y = 0;
+          output->window.window.rh = output;
+
+          Drawable window = &output->window;
+          // this owns the EGL surface
+
+          // this must be done after gl has been initialized
+          // 'w' is a generic pointer that gets passed through
+          output->display = jwxyz_gl_make_display(window);
+
+          /* Kludge: even though the init_cb functions are declared to take 2 args,
+             actually call them with 3, for the benefit of xlockmore_init() and
+             xlockmore_setup().
+           */
+          void *(*init_cb) (Display *, Window, void *) =
+            (void *(*) (Display *, Window, void *)) ft->init_cb;
+
+          output->closure = init_cb(output->display, window, ft->setup_arg);
+          output->fpst = fps_init (output->display, window);
+
+          glGenFramebuffers(1, &output->frameBuffer);
+          glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
+          GLuint texColorBuffer;
+          glGenTextures(1, &texColorBuffer);
+          glBindTexture(GL_TEXTURE_2D, texColorBuffer);
+          glTexImage2D(
+              GL_TEXTURE_2D, 0, GL_RGB, output->width,  output->height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL
+          );
+          glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+          glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+          glFramebufferTexture2D(
+              GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColorBuffer, 0
+          );
+          GLuint rboDepthStencil;
+          glGenRenderbuffers(1, &rboDepthStencil);
+          glBindRenderbuffer(GL_RENDERBUFFER, rboDepthStencil);
+          glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,  output->width,  output->height);
+          glFramebufferRenderbuffer(
+              GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rboDepthStencil
+          );
+
+          glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
+
+          delay = ft->draw_cb (output->display, window, output->closure);
+
+          jwxyz_gl_flush (output->display);
+          glFinish();
+          glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+          glBlitNamedFramebuffer(output->frameBuffer,
+                  0,
+                    0, 0, output->window.frame.width, output->window.frame.height,
+                 0, 0, output->window.frame.width, output->window.frame.height,
+                  GL_COLOR_BUFFER_BIT,
+                  GL_NEAREST);
+
+          if (!eglSwapBuffers(state.egl_dpy, output->egl_surface)) {
+            fprintf(stderr, "Failed to swap buffers\n");
+            return EXIT_FAILURE;
+          }
+
+          fprintf(stderr, "Have committed first buffer\n");
+
+
+
+      } else {
+          // Update hack
+          if (output->needs_ack_configure) {
+            // todo: other output processing
+            wl_egl_window_resize(output->egl_window, output->width, output->height, 0, 0);
+            output->needs_ack_configure = False;
+
+            // todo: what about framebuffer? stretch it? reset?
+          }
+
+          if (!eglMakeCurrent(state.egl_dpy, output->egl_surface, output->egl_surface, output->egl_context)) {
+            fprintf(stderr, "Failed to make a context current\n");
+            return EXIT_FAILURE;
+          }
+
+          glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
+
+          delay = ft->draw_cb (output->display, &output->window, output->closure);
+          jwxyz_gl_flush (output->display);
+
+          glFinish();
+          glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+          // todo: combine with upscaling?
+          glBlitNamedFramebuffer(output->frameBuffer,
+                0,
+                0, 0, output->window.frame.width, output->window.frame.height,
+                0, 0, output->window.frame.width, output->window.frame.height,
+                GL_COLOR_BUFFER_BIT,
+                GL_NEAREST);
+
+            // note: swapbuffers probably moves into something called by draw_cb
+          if (!eglSwapBuffers(state.egl_dpy, output->egl_surface)) {
+             fprintf(stderr, "Failed to swap buffers\n");
+             return EXIT_FAILURE;
+          }
+          // ^^ TODO: this ends up round-robin placing frames. The standard
+          // fix for multimonitor is eglSwapInterval(0) and have the program
+          // manage frame callbacks
+
       }
+    }
   }
 
-  ft->free_cb (disp, window, closure);
+  struct output_hack *output, *tmp_output;
+  wl_list_for_each_safe(output, tmp_output, &state.outputs, link) {
+    output_hack_destroy(output);
+  }
+
 
 #ifdef HAVE_RECORD_ANIM
   if (anim_state) screenhack_record_anim_free (anim_state);

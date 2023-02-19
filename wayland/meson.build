@@ -124,6 +124,7 @@ hacks = [
 	['voronoi', ['hacks/glx/voronoi.c'] + glhack_files, []],
 	['gears', ['hacks/glx/gears.c', 'hacks/glx/tube.c'] + glhack_files + gears_files, []],
 	['queens', ['hacks/glx/queens.c', 'hacks/glx/chessmodels.c'] + glhack_files + track_files, []],
+	['endgame', ['hacks/glx/endgame.c', 'hacks/glx/chessmodels.c'] + glhack_files + track_files, []],
 	['quasicrystal', ['hacks/glx/quasicrystal.c'] + glhack_files + track_files, []],
 	['atlantis', ['hacks/glx/atlantis.c','hacks/glx/dolphin.c','hacks/glx/shark.c','hacks/glx/whale.c','hacks/glx/swim.c'] + glhack_files + png_files, []],
 	['splodesic', ['hacks/glx/splodesic.c'] + glhack_files + track_files, []],
