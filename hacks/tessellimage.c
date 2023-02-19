@@ -17,6 +17,8 @@
 # include <X11/keysymdef.h>
 #endif
 
+#include <sys/time.h>
+
 struct state {
   Display *dpy;
   Window window;

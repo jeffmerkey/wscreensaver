@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h> /* for localtime() and gettimeofday() */
+#include <sys/time.h>
 
 #include "screenhack.h"
 

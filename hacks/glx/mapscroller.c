@@ -42,7 +42,7 @@
 
 #ifdef USE_GL /* whole file */
 
-#ifndef HAVE_COCOA
+#if !defined(HAVE_COCOA) && !defined(HAVE_WAYLAND)
 # include <X11/Intrinsic.h>
 #endif
 

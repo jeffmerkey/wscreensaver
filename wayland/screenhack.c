@@ -513,6 +513,16 @@ jwxyz_get_pos (Window w, XPoint *xvpos, XPoint *xp)
   }
 }
 
+void
+load_random_image_wayland (Screen *screen, Window window, Drawable drawable,
+                           void (*callback) (Screen *, Window, Drawable,
+                                             const char *name,
+                                             XRectangle *geom, void *closure),
+                           void *closure)
+{
+    fprintf(stderr, "Call to unimplemented load_random_image_wayland\n");
+}
+
 struct resource_kv {
   /* null key values signify wild card */
   char *progname;

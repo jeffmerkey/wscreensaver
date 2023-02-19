@@ -27,6 +27,7 @@
 #include "analogtv.h"
 
 #include <time.h>
+#include <sys/time.h>
 
 #undef DEBUG
 #undef DARKEN

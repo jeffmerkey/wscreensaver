@@ -27,6 +27,7 @@
 #include "colors.h"
 #include "rotator.h"
 #include "gltrackball.h"
+#include <sys/time.h>
 
 #define DEF_START	"0.00"
 #define DEF_DILATE	"1.00"

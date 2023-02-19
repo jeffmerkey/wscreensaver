@@ -145,6 +145,7 @@
 # define refresh_esper 0
 # define release_esper 0
 # include "xlockmore.h"
+#include <sys/time.h>
 
 #undef RANDSIGN
 #define RANDSIGN() ((random() & 1) ? 1 : -1)

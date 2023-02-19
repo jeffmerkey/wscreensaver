@@ -21,6 +21,8 @@
 #include "xshm.h"
 #endif
 
+#include <sys/time.h>
+
 /*
  * Implementation notes
  *

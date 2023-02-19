@@ -56,6 +56,7 @@
 #include "ximage-loader.h"
 #include "grab-ximage.h"
 #include <ctype.h>
+#include <sys/time.h>
 
 #ifdef USE_GL /* whole file */
 

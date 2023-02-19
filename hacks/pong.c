@@ -58,6 +58,7 @@
 #include "screenhack.h"
 #include "analogtv.h"
 #include <time.h>
+#include <sys/time.h>
 #ifndef HAVE_JWXYZ
 # include <X11/keysym.h>
 #endif

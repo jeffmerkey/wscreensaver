@@ -75,6 +75,7 @@
 
 #include "gltrackball.h"
 #include "grab-ximage.h"
+#include <sys/time.h>
 
 #define PI M_PI
 

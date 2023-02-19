@@ -22,6 +22,7 @@
 #include "rotator.h"
 #include "gltrackball.h"
 #include <ctype.h>
+#include <sys/time.h>
 
 #ifdef USE_GL /* whole file */
 

@@ -12,6 +12,7 @@
 
 #include <math.h>
 #include <limits.h>
+#include <sys/time.h>
 #include "screenhack.h"
 
 #ifndef MIN

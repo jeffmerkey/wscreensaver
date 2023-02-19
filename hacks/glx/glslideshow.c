@@ -61,6 +61,8 @@
 # define release_slideshow 0
 # include "xlockmore.h"
 
+#include <sys/time.h>
+
 #ifdef USE_GL
 
 

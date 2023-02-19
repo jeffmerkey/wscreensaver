@@ -25,6 +25,8 @@
 #include <limits.h>
 #include "screenhack.h"
 
+#include <sys/time.h>
+
 #define X_PERIOD 15000.0
 #define Y_PERIOD 12000.0
 

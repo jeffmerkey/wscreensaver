@@ -827,7 +827,13 @@ load_random_image_cocoa (Screen *screen, Window window, Drawable drawable,
   callback (screen, window, drawable, name, &geom, closure);
   if (name) free (name);
 }
+#elif defined(HAVE_WAYLAND)
 
+void load_random_image_wayland (Screen *screen, Window window, Drawable drawable,
+                           void (*callback) (Screen *, Window, Drawable,
+                                             const char *name,
+                                             XRectangle *geom, void *closure),
+                           void *closure);
 
 #elif defined(HAVE_ANDROID)
 
@@ -942,6 +948,8 @@ load_image_async (Screen *screen, Window window, Drawable drawable,
   if (!callback) abort();
 # if defined(HAVE_COCOA)
   load_random_image_cocoa   (screen, window, drawable, callback, closure);
+# elif defined(HAVE_WAYLAND)
+  load_random_image_wayland (screen, window, drawable, callback, closure);
 # elif defined(HAVE_ANDROID)
   load_random_image_android (screen, window, drawable, callback, closure);
 # else /* real X11 */
