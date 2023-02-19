@@ -1270,6 +1270,7 @@ ya_rand_init (0);
 
         if (quantum > 0)
           {
+            // todo: sleep with ppoll on wayland display socket
             usleep (quantum);
 
             // todo: apply to all outputs?
@@ -1279,7 +1280,7 @@ ya_rand_init (0);
     #endif
           }
 
-        if (wl_display_dispatch(state.display) == -1 && errno != EINTR) {
+        if (wl_display_roundtrip(state.display) == -1 && errno != EINTR) {
             state.running = False;
             break;
         }
