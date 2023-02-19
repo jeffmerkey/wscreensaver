@@ -84,13 +84,57 @@ foreach p : client_protocols
 	client_protos_headers += wayland_scanner_client.process(xml)
 endforeach
 
-# TODO: only cover a few hacks
-# if we make separate 
+lib_files = [
+        'utils/hsv.c',
+        'utils/colors.c',
+        'utils/xft.c',
+        'utils/xftwrap.c',
+        'utils/resources.c',
+        'utils/usleep.c',
+        'utils/yarandom.c',
+        'utils/utf8wc.c',
+        'utils/font-retry.c',
+        'utils/pow2.c',
+        'utils/spline.c',
+        'jwxyz/jwxyz-common.c',
+        'jwxyz/jwxyz-gl.c',
+        'jwxyz/jwxyz-timers.c',
+        'wayland/screenhack.c',
+        'hacks/xlockmore.c',
+        'hacks/ximage-loader.c',
+        'hacks/fps.c',
+        'hacks/glx/xlock-gl-utils.c',
+        'hacks/glx/erase-gl.c',
+        'hacks/glx/rotator.c',
+        'hacks/glx/trackball.c',
+        'hacks/glx/gltrackball.c',
+        'hacks/glx/normals.c',
+        'hacks/glx/involute.c',
+        'hacks/glx/texfont.c',
+        'hacks/glx/fps-gl.c',
+        'hacks/glx/glsl-utils.c',
+        'hacks/glx/pipeobjs.c',
+        'hacks/glx/sphere.c',
+        'hacks/glx/teapot.c',
+        'hacks/glx/buildlwo.c',
+]
+mod_lib_files = []
+foreach f : lib_files
+  mod_lib_files += '../' + f
+endforeach
+
+# for now, assume all external libraries are available -- but none which depend on X11
+base_deps = [math,wayland_client,wayland_egl,GLES,GL,egl,GLU,png,gdkpixbuf,gio]
+include_dirs = ['../hacks','../utils', '../jwxyz']
+
+lib = static_library('common', mod_lib_files + client_protos_src + client_protos_headers,
+		dependencies: base_deps,
+		include_directories: include_dirs,
+		c_args: build_flags)
+xft_objs = lib.extract_objects('../utils/xft.c', '../utils/xftwrap.c')
 
 xft_files = ['utils/xft.c', 'utils/xftwrap.c']
 anim_files = [] #'hacks/recanim.c']
-
-# TODO: mimic the way the Makefile builds lots of object files; then match Makefile names for things
 
 # TODO: make a shim for 'utils/visual.c', 'utils/xmu.c'
 hack_1_files = ['hacks/fps.c', 'utils/resources.c',
@@ -114,47 +158,51 @@ gears_files = ['hacks/glx/normals.c','hacks/glx/involute.c'] + track_files
 pipe_files = ['hacks/glx/pipeobjs.c','hacks/glx/sphere.c','hacks/glx/teapot.c','hacks/glx/normals.c','hacks/glx/buildlwo.c']
 spl_files = ['utils/spline.c']
 
+# name, specific files, files from object library
 hacks = [
-	['hyperball', ['hacks/hyperball.c'] + hack_files, []],
-	['abstractile', ['hacks/abstractile.c'] + hack_files + color_files, []],
-	['fuzzyflakes', ['hacks/fuzzyflakes.c'] + hack_files, []],
-	['substrate', ['hacks/substrate.c'] + hack_files, []],
-	['starfish', ['hacks/starfish.c'] + hack_files + color_files + spl_files, []],
+	['hyperball', ['hacks/hyperball.c'], hack_files],
+	['abstractile', ['hacks/abstractile.c'], hack_files + color_files],
+	['fuzzyflakes', ['hacks/fuzzyflakes.c'], hack_files],
+	['substrate', ['hacks/substrate.c'], hack_files],
+	['starfish', ['hacks/starfish.c'], hack_files + color_files + spl_files],
 
-	['voronoi', ['hacks/glx/voronoi.c'] + glhack_files, []],
-	['gears', ['hacks/glx/gears.c', 'hacks/glx/tube.c'] + glhack_files + gears_files, []],
-	['queens', ['hacks/glx/queens.c', 'hacks/glx/chessmodels.c'] + glhack_files + track_files, []],
-	['endgame', ['hacks/glx/endgame.c', 'hacks/glx/chessmodels.c'] + glhack_files + track_files, []],
-	['quasicrystal', ['hacks/glx/quasicrystal.c'] + glhack_files + track_files, []],
-	['atlantis', ['hacks/glx/atlantis.c','hacks/glx/dolphin.c','hacks/glx/shark.c','hacks/glx/whale.c','hacks/glx/swim.c'] + glhack_files + png_files, []],
-	['splodesic', ['hacks/glx/splodesic.c'] + glhack_files + track_files, []],
-	['pipes', ['hacks/glx/pipes.c'] + glhack_files + pipe_files + track_files, []],
-	['polyhedra', ['hacks/glx/polyhedra.c','hacks/glx/polyhedra-gl.c','hacks/glx/normals.c','hacks/glx/teapot.c'] + glhack_files + track_files, []],
+	['voronoi', ['hacks/glx/voronoi.c'], glhack_files],
+	['gears', ['hacks/glx/gears.c', 'hacks/glx/tube.c'], glhack_files + gears_files],
+	['queens', ['hacks/glx/queens.c', 'hacks/glx/chessmodels.c'], glhack_files + track_files],
+	['endgame', ['hacks/glx/endgame.c', 'hacks/glx/chessmodels.c'], glhack_files + track_files],
+	['quasicrystal', ['hacks/glx/quasicrystal.c'], glhack_files + track_files],
+	['atlantis', ['hacks/glx/atlantis.c','hacks/glx/dolphin.c','hacks/glx/shark.c','hacks/glx/whale.c','hacks/glx/swim.c'], glhack_files + png_files],
+	['splodesic', ['hacks/glx/splodesic.c'], glhack_files + track_files],
+	['pipes', ['hacks/glx/pipes.c'], glhack_files + pipe_files + track_files],
+	['polyhedra', ['hacks/glx/polyhedra.c','hacks/glx/polyhedra-gl.c','hacks/glx/normals.c','hacks/glx/teapot.c'], glhack_files + track_files],
 	
 ]
 
 # 
 
-include_dirs = ['../hacks','../utils', '../jwxyz']
-
-# for now, assume all external libraries are available -- but none which depend on X11
-base_deps = [math,wayland_client,wayland_egl,GLES,GL,egl,GLU,png,gdkpixbuf,gio]
 
 foreach hack : hacks
 	name = hack[0]
 	sources = hack[1]
-	deps = hack[2]
+	common_sources = hack[2]
 	
 	mod_sources = []
 	foreach f : sources
 		mod_sources += '../' + f
 	endforeach
 	
+	mod_common_sources = []
+	foreach f : common_sources
+		mod_common_sources += '../' + f
+	endforeach
+
+	common_objs = lib.extract_objects(mod_common_sources)
+
 	exec = executable(
 		'xscreensaver-'+name,
 		files(mod_sources) + client_protos_src + client_protos_headers,
-# 		link_with: main_lib,
-		dependencies: deps + base_deps,
+		objects: common_objs,
+		dependencies: base_deps,
 		include_directories: include_dirs,
 		c_args: build_flags,
 		install : true
