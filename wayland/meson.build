@@ -57,31 +57,27 @@ build_flags = [
 
 wayland_scanner = find_program('wayland-scanner')
 
-# TODO: generate these only _ONCE_
-wayland_scanner_code = generator(
-	wayland_scanner,
-	output: '@BASENAME@-protocol.c',
-	arguments: ['private-code', '@INPUT@', '@OUTPUT@'],
-)
-
-wayland_scanner_client = generator(
-	wayland_scanner,
-	output: '@BASENAME@-client-protocol.h',
-	arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
-)
-
 client_protos_src = []
-client_protos_headers = []
 
 client_protocols = [
-	['wlr-layer-shell-unstable-v1.xml'],
-	['xdg-shell.xml'],
+	'wlr-layer-shell-unstable-v1.xml',
+	'xdg-shell.xml',
 ]
 
 foreach p : client_protocols
 	xml = join_paths(p)
-	client_protos_src += wayland_scanner_code.process(xml)
-	client_protos_headers += wayland_scanner_client.process(xml)
+	client_protos_src += custom_target(
+		p.underscorify() + '_c',
+		input: p,
+		output: '@BASENAME@-protocol.c',
+		command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+	)
+	client_protos_src += custom_target(
+		xml.underscorify() + '_client_h',
+		input: xml,
+		output: '@BASENAME@-client-protocol.h',
+		command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+	)
 endforeach
 
 lib = [
@@ -140,7 +136,7 @@ base_deps = [math,wayland_client,wayland_egl,GLES,GL,egl,GLU,png,gdkpixbuf,gio]
 include_dirs = ['../hacks','../utils', '../jwxyz']
 
 lib = static_library('common',
-	mod_lib + client_protos_src + client_protos_headers,
+	mod_lib + client_protos_src,
 	dependencies: base_deps,
 	include_directories: include_dirs,
 	c_args: build_flags
@@ -336,6 +332,20 @@ hacks = [
 # 	['webcollage-helper', ['hacks/webcollage-helper.c'], hack_1],
 
 	# GL hacks, see hacks/glx/Makefile.in
+	['atlantis', ['hacks/glx/atlantis.c','hacks/glx/dolphin.c','hacks/glx/shark.c','hacks/glx/whale.c','hacks/glx/swim.c'], glhack + png],
+	['atunnel', ['hacks/glx/atunnel.c','hacks/glx/tunnel_draw.c'], glhack + png],
+	['cage', ['hacks/glx/cage.c'], glhack + png],
+	['flurry', ['hacks/glx/flurry.c','hacks/glx/flurry-smoke.c','hacks/glx/flurry-spark.c','hacks/glx/flurry-star.c','hacks/glx/flurry-texture.c'], glhack],
+	['gears', ['hacks/glx/gears.c','hacks/glx/tube.c'], glhack + track + gears_1],
+	['moebius', ['hacks/glx/moebius.c','hacks/glx/sphere.c','hacks/glx/tube.c'], glhack + track + png],
+	['pipes', ['hacks/glx/pipes.c','hacks/glx/buildlwo.c','hacks/glx/sphere.c','hacks/glx/teapot.c','hacks/glx/normals.c','hacks/glx/pipeobjs.c'], glhack + track],
+	['superquadrics', ['hacks/glx/superquadrics.c'], glhack],
+	['morph3d', ['hacks/glx/morph3d.c'], glhack],
+	['rubik', ['hacks/glx/rubik.c'], glhack + track],
+	['stairs', ['hacks/glx/stairs.c','hacks/glx/sphere.c'], glhack + track + png],
+	['sproingies', ['hacks/glx/sproingies.c','hacks/glx/sproingiewrap.c','hacks/glx/gllist.c','hacks/glx/s1_1.c','hacks/glx/s1_2.c','hacks/glx/s1_3.c','hacks/glx/s1_4.c','hacks/glx/s1_5.c','hacks/glx/s1_6.c','hacks/glx/s1_b.c'], glhack],
+	# lament: skipped, complicated/uses dxf2gl
+	['bubble3d', ['hacks/glx/bubble3d.c','hacks/glx/b_draw.c','hacks/glx/b_lockglue.c','hacks/glx/b_sphere.c'], glhack],
 	# glplanet, dymaxionmap: skipped, complicated
 	['pulsar', ['hacks/glx/pulsar.c'], glhack + png],
 # 	['extrusion', ['hacks/glx/extrusion.c', 'hacks/glx/extrusion-helix2.c',  'hacks/glx/extrusion-helix3.c',  'hacks/glx/extrusion-helix4.c', 'hacks/glx/extrusion-joinoffset.c', 'hacks/glx/extrusion-screw.c', 'hacks/glx/extrusion-taper.c', 'hacks/glx/extrusion-twistoid.c'], glhack + png + track],
@@ -453,8 +463,6 @@ hacks = [
 	['hextrail', ['hacks/glx/hextrail.c','hacks/glx/normals.c'], glhack + track],
 ]
 
-# 
-
 
 foreach hack : hacks
 	name = hack[0]
@@ -475,7 +483,7 @@ foreach hack : hacks
 
 	exec = executable(
 		'xscreensaver-'+name,
-		files(mod_sources) + client_protos_src + client_protos_headers,
+		files(mod_sources) + client_protos_src,
 		objects: common_objs,
 		dependencies: base_deps,
 		include_directories: include_dirs,

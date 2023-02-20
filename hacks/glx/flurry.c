@@ -87,6 +87,7 @@ ModStruct   flurry_description = {
 #endif
 
 #include "flurry.h"
+#include <sys/time.h>
 
 global_info_t *flurry_info = NULL;
 
