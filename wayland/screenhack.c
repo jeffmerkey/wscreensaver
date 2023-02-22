@@ -133,10 +133,6 @@
 # include "recanim.h"
 #endif
 
-// #ifndef _XSCREENSAVER_VROOT_H_
-// # error Error!  You have an old version of vroot.h!  Check -I args.
-// #endif /* _XSCREENSAVER_VROOT_H_ */
-
 #include <wayland-egl.h>
 #include <GL/gl.h>
 #include <EGL/egl.h>
@@ -197,6 +193,7 @@ struct output_hack {
   struct screenhack_state *state;
 
   struct wl_output *output;
+  uint32_t output_name;
 
   struct wl_surface *surface;
   struct zwlr_layer_surface_v1 *layer_surface;
@@ -204,6 +201,8 @@ struct output_hack {
   EGLContext egl_context;
   EGLSurface egl_surface;
   GLuint frameBuffer;
+  GLuint texColorBuffer;
+  GLuint rboDepthStencil;
 
   struct jwxyz_Drawable window;
   Display *display;
@@ -917,10 +916,32 @@ static void handle_configure(void *data,
   output->width = width;
   output->height = height;
 }
+
+static void
+output_hack_destroy(struct output_hack *output) {
+    if (output->egl_window) {
+        eglDestroyContext(state.egl_dpy, output->egl_context);
+        eglDestroySurface(state.egl_dpy, output->egl_surface);
+        wl_egl_window_destroy(output->egl_window);
+    }
+    if (output->surface) {
+        wl_surface_destroy(output->surface);
+    }
+    if (output->layer_surface) {
+        zwlr_layer_surface_v1_destroy(output->layer_surface);
+    }
+    if (output->closure) {
+        xscreensaver_function_table->free_cb (output->display, &output->window, output->closure);
+    }
+    wl_list_remove(&output->link);
+    free(output);
+}
+
 static void
 handle_closed(void *data,
       struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1) {
-  // TODO: exit program, or close window; what does this mean for layer shell bg?
+  struct output_hack *output = data;
+  output_hack_destroy(output);
 }
 
 static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
@@ -933,15 +954,6 @@ noop(void) {
 
 }
 
-static void
-output_hack_destroy(struct output_hack *output) {
-
-    if (output->closure) {
-        xscreensaver_function_table->free_cb (output->display, &output->window, output->closure);
-    }
-    wl_list_remove(&output->link);
-    free(output);
-}
 
 static void
 handle_output_name(void *data,
@@ -999,16 +1011,17 @@ static void registry_global(void *data, struct wl_registry *registry,
                       &zwlr_layer_shell_v1_interface, 1);
   } else if (strcmp(interface, wl_output_interface.name) == 0 && version >= 4) {
       // require version 4, which has a 'name' event
-        struct wl_output *output = wl_registry_bind(registry, name,
-		      &wl_output_interface, 4);
-	struct output_hack *out = calloc(1, sizeof(struct output_hack));
-	wl_list_insert(&state.outputs, &out->link);
-	out->state = &state;
-	out->output = output;
-	/* all other fields zerod */
+    struct wl_output *output = wl_registry_bind(registry, name,
+              &wl_output_interface, 4);
+    struct output_hack *out = calloc(1, sizeof(struct output_hack));
+    wl_list_insert(&state.outputs, &out->link);
+    out->state = &state;
+    out->output = output;
+    out->output_name = name;
+    /* all other fields zerod */
 
-	wl_output_add_listener(output, &output_listener, out);
-    }
+    wl_output_add_listener(output, &output_listener, out);
+  }
 }
 
 static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {}
@@ -1018,32 +1031,28 @@ static const struct wl_registry_listener registry_listener = {
     registry_global_remove
 };
 
-
-static Bool
-usleep_and_process_events (//Display *dpy,
-//                           const struct xscreensaver_function_table *ft,
-//                           Window window,
-                           fps_state *fpst,
-//                           void *closure,
-                           unsigned long delay
-#ifdef DEBUG_PAIR
-                         , Window window2, fps_state *fpst2, void *closure2,
-                           unsigned long delay2
-#endif
-# ifdef HAVE_RECORD_ANIM
-                         , record_anim_state *anim_state
-# endif
-                           )
-{
-
-
-
-  return True;
+static void setup_framebuffer(struct output_hack *output) {
+    glGenFramebuffers(1, &output->frameBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
+    glGenTextures(1, &output->texColorBuffer);
+    glBindTexture(GL_TEXTURE_2D, output->texColorBuffer);
+    glTexImage2D(
+        GL_TEXTURE_2D, 0, GL_RGB, output->width,  output->height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL
+    );
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, output->texColorBuffer, 0
+    );
+    glGenRenderbuffers(1, &output->rboDepthStencil);
+    glBindRenderbuffer(GL_RENDERBUFFER, output->rboDepthStencil);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,  output->width,  output->height);
+    glFramebufferRenderbuffer(
+        GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, output->rboDepthStencil
+    );
 }
 
-
 int main(int argc, char **argv) {
-
   char version[255];
   struct xscreensaver_function_table *ft = xscreensaver_function_table;
   progname = argv[0];   /* reset later */
@@ -1342,26 +1351,7 @@ ya_rand_init (0);
           output->closure = init_cb(output->display, window, ft->setup_arg);
           output->fpst = fps_init (output->display, window);
 
-          glGenFramebuffers(1, &output->frameBuffer);
-          glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
-          GLuint texColorBuffer;
-          glGenTextures(1, &texColorBuffer);
-          glBindTexture(GL_TEXTURE_2D, texColorBuffer);
-          glTexImage2D(
-              GL_TEXTURE_2D, 0, GL_RGB, output->width,  output->height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL
-          );
-          glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-          glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-          glFramebufferTexture2D(
-              GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColorBuffer, 0
-          );
-          GLuint rboDepthStencil;
-          glGenRenderbuffers(1, &rboDepthStencil);
-          glBindRenderbuffer(GL_RENDERBUFFER, rboDepthStencil);
-          glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,  output->width,  output->height);
-          glFramebufferRenderbuffer(
-              GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rboDepthStencil
-          );
+          setup_framebuffer(output);
 
           glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
 
@@ -1388,21 +1378,32 @@ ya_rand_init (0);
 
 
       } else {
-          // Update hack
-          if (output->needs_ack_configure) {
-            // todo: other output processing
-            wl_egl_window_resize(output->egl_window, output->width, output->height, 0, 0);
-            output->needs_ack_configure = False;
-
-            // todo: what about framebuffer? stretch it? reset?
-          }
-
           if (!eglMakeCurrent(state.egl_dpy, output->egl_surface, output->egl_surface, output->egl_context)) {
             fprintf(stderr, "Failed to make a context current\n");
             return EXIT_FAILURE;
           }
 
           glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
+
+          // Update hack
+          if (output->needs_ack_configure) {
+            // todo: other output processing
+            wl_egl_window_resize(output->egl_window, output->width, output->height, 0, 0);
+            output->needs_ack_configure = False;
+
+            output->window.frame.width = output->width;
+            output->window.frame.height = output->height;
+
+            glDeleteFramebuffers(1, &output->frameBuffer);
+            glDeleteTextures(1, &output->texColorBuffer);
+            glDeleteRenderbuffers(1, &output->rboDepthStencil);
+            setup_framebuffer(output);
+            glBindFramebuffer(GL_FRAMEBUFFER, output->frameBuffer);
+
+            ft->reshape_cb(output->display, &output->window, output->closure, output->width, output->height);
+            // todo: what about framebuffer? stretch it? reset?
+            fprintf(stderr, "Reshape %d %d\n", output->width, output->height);
+          }
 
           delay = ft->draw_cb (output->display, &output->window, output->closure);
           jwxyz_gl_flush (output->display);
