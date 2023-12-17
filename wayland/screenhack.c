@@ -140,6 +140,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include <string.h>
 #include <errno.h>
+#include <poll.h>
 
 #ifndef isupper
 # define isupper(c)  ((c) >= 'A' && (c) <= 'Z')
@@ -1285,6 +1286,8 @@ ya_rand_init (0);
 
   unsigned long delay = 1;
 
+  int display_fd = wl_display_get_fd(state.display);
+
   int iter = 0;
   while (state.running) {
       do {
@@ -1310,7 +1313,30 @@ ya_rand_init (0);
     #endif
           }
 
-        if (wl_display_roundtrip(state.display) == -1 && errno != EINTR) {
+        struct pollfd disp_fd;
+        disp_fd.events = POLLIN;
+        disp_fd.fd = display_fd;
+        if (poll(&disp_fd, 1, 0) == -1 && errno != EINTR) {
+            fprintf(stderr, "Poll error");
+            state.running = False;
+            break;
+        }
+        if (disp_fd.revents & POLLIN) {
+            // handle inputs before hang-up message
+            if (wl_display_dispatch(state.display) == -1 && errno != EINTR) {
+                  state.running = False;
+                  break;
+            }
+            break;
+        }
+        if (disp_fd.revents & POLLHUP) {
+            // compositor has closed the connection
+            state.running = False;
+            break;
+        }
+        if (disp_fd.revents & POLLERR) {
+            // error condition
+            fprintf(stderr, "Display fd error condition");
             state.running = False;
             break;
         }
@@ -1345,13 +1371,13 @@ ya_rand_init (0);
             return EXIT_FAILURE;
           }
 
-	  /* Ensure that buffer swaps for output->egl_surface are not synchronized
-	   * to the compositor, as this would result in blocking and round-robin
-	   * updates when there are multiple outputs */
-	  if (!eglSwapInterval(state.egl_dpy, 0)) {
-	    fprintf(stderr, "Failed to set swap interval\n");
-	    return EXIT_FAILURE;
-	  }
+          /* Ensure that buffer swaps for output->egl_surface are not synchronized
+           * to the compositor, as this would result in blocking and round-robin
+           * updates when there are multiple outputs */
+          if (!eglSwapInterval(state.egl_dpy, 0)) {
+            fprintf(stderr, "Failed to set swap interval\n");
+            return EXIT_FAILURE;
+          }
 
           output->window.type = WINDOW;
           output->window.frame.x = 0;
@@ -1464,9 +1490,11 @@ ya_rand_init (0);
           // ^^ TODO: this ends up round-robin placing frames. The standard
           // fix for multimonitor is eglSwapInterval(0) and have the program
           // manage frame callbacks
-
       }
     }
+
+    // Send all messages to the compositor
+    wl_display_flush(state.display);
   }
 
   struct output_hack *output, *tmp_output;
