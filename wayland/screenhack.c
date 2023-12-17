@@ -192,11 +192,20 @@ struct output_hack {
   struct wl_list link;
   struct screenhack_state *state;
 
+  /* Wayland details */
   struct wl_output *output;
   uint32_t output_name;
 
   struct wl_surface *surface;
   struct zwlr_layer_surface_v1 *layer_surface;
+  /* if frame_callback is non-NULL, compositor has not yet asked for a new frame */
+  struct wl_callback *frame_callback;
+  Bool needs_ack_configure;
+  uint32_t configure_serial;
+  int width;
+  int height;
+
+  /* EGL details */
   struct wl_egl_window *egl_window;
   EGLContext egl_context;
   EGLSurface egl_surface;
@@ -204,16 +213,13 @@ struct output_hack {
   GLuint texColorBuffer;
   GLuint rboDepthStencil;
 
+  /* Screenhack data */
   struct jwxyz_Drawable window;
   Display *display;
   /* the state for the hack running on this output */
   void *closure;
   fps_state *fpst;
 
-  Bool needs_ack_configure;
-  uint32_t configure_serial;
-  int width;
-  int height;
 };
 
 struct screenhack_state {
@@ -924,6 +930,9 @@ output_hack_destroy(struct output_hack *output) {
         eglDestroySurface(state.egl_dpy, output->egl_surface);
         wl_egl_window_destroy(output->egl_window);
     }
+    if (output->frame_callback) {
+        wl_callback_destroy(output->frame_callback);
+    }
     if (output->surface) {
         wl_surface_destroy(output->surface);
     }
@@ -1029,6 +1038,18 @@ static void registry_global_remove(void *data, struct wl_registry *registry, uin
 static const struct wl_registry_listener registry_listener = {
     registry_global,
     registry_global_remove
+};
+
+static void frame_callback_done(void *data, struct wl_callback *wl_callback,
+              uint32_t callback_data) {
+  struct output_hack *output = data;
+  Assert(output->frame_callback == wl_callback, "Frame callback did not match");
+  output->frame_callback = NULL;
+  wl_callback_destroy(wl_callback);
+}
+
+static const struct wl_callback_listener frame_callback_listener = {
+    .done = frame_callback_done,
 };
 
 static void setup_framebuffer(struct output_hack *output) {
@@ -1324,6 +1345,14 @@ ya_rand_init (0);
             return EXIT_FAILURE;
           }
 
+	  /* Ensure that buffer swaps for output->egl_surface are not synchronized
+	   * to the compositor, as this would result in blocking and round-robin
+	   * updates when there are multiple outputs */
+	  if (!eglSwapInterval(state.egl_dpy, 0)) {
+	    fprintf(stderr, "Failed to set swap interval\n");
+	    return EXIT_FAILURE;
+	  }
+
           output->window.type = WINDOW;
           output->window.frame.x = 0;
           output->window.frame.y = 0;
@@ -1368,6 +1397,9 @@ ya_rand_init (0);
                   GL_COLOR_BUFFER_BIT,
                   GL_NEAREST);
 
+          output->frame_callback = wl_surface_frame(output->surface);
+          wl_callback_add_listener(output->frame_callback, &frame_callback_listener, output);
+
           if (!eglSwapBuffers(state.egl_dpy, output->egl_surface)) {
             fprintf(stderr, "Failed to swap buffers\n");
             return EXIT_FAILURE;
@@ -1375,9 +1407,11 @@ ya_rand_init (0);
 
           fprintf(stderr, "Have committed first buffer\n");
 
-
-
       } else {
+          if (output->frame_callback) {
+              // only redraw on this output after compositor indicated a frame is needed
+              continue;
+          }
           if (!eglMakeCurrent(state.egl_dpy, output->egl_surface, output->egl_surface, output->egl_context)) {
             fprintf(stderr, "Failed to make a context current\n");
             return EXIT_FAILURE;
@@ -1418,6 +1452,9 @@ ya_rand_init (0);
                 0, 0, output->window.frame.width, output->window.frame.height,
                 GL_COLOR_BUFFER_BIT,
                 GL_NEAREST);
+
+          output->frame_callback = wl_surface_frame(output->surface);
+          wl_callback_add_listener(output->frame_callback, &frame_callback_listener, output);
 
             // note: swapbuffers probably moves into something called by draw_cb
           if (!eglSwapBuffers(state.egl_dpy, output->egl_surface)) {
