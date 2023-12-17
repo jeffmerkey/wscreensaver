@@ -1342,6 +1342,7 @@ ya_rand_init (0);
         }
       } while (delay > 0);
 
+    Bool waiting_for_compositor = True;
 
     struct output_hack *output;
     wl_list_for_each(output, &state.outputs, link) {
@@ -1433,6 +1434,7 @@ ya_rand_init (0);
 
           fprintf(stderr, "Have committed first buffer\n");
 
+          waiting_for_compositor = False;
       } else {
           if (output->frame_callback) {
               // only redraw on this output after compositor indicated a frame is needed
@@ -1487,14 +1489,21 @@ ya_rand_init (0);
              fprintf(stderr, "Failed to swap buffers\n");
              return EXIT_FAILURE;
           }
-          // ^^ TODO: this ends up round-robin placing frames. The standard
-          // fix for multimonitor is eglSwapInterval(0) and have the program
-          // manage frame callbacks
+
+          waiting_for_compositor = False;
       }
     }
 
-    // Send all messages to the compositor
-    wl_display_flush(state.display);
+    if (waiting_for_compositor) {
+        // No outputs have any frame requested yet, so wait until compositor does something
+        if (wl_display_dispatch(state.display) == -1 && errno != EINTR) {
+            state.running = False;
+            break;
+        }
+    } else {
+        // Send all messages to the compositor
+        wl_display_flush(state.display);
+    }
   }
 
   struct output_hack *output, *tmp_output;
