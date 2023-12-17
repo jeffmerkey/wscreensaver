@@ -71,6 +71,7 @@
 #ifdef HAVE_JWXYZ
 # include "jwxyz.h"
 # include <string.h> /* X11/Xos.h brings this in. */
+# include <sys/time.h> /* X11/Xos.h brings this in. */
 #else  /* real X11 */
 # include <X11/Xlib.h>
 # include <X11/Xutil.h>
