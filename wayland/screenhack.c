@@ -1450,6 +1450,7 @@ ya_rand_init (0);
           // Update hack
           if (output->needs_ack_configure) {
             // todo: other output processing
+            zwlr_layer_surface_v1_ack_configure(output->layer_surface, output->configure_serial);
             wl_egl_window_resize(output->egl_window, output->width, output->height, 0, 0);
             output->needs_ack_configure = False;
 
